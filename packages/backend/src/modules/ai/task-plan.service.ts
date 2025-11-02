@@ -24,6 +24,13 @@ export interface TaskPlanResponse {
   subtasks: Subtask[];
   conflicts: string[];
   recommendations: string[];
+  id?: string;
+  status?: string;
+  userId?: string;
+  goalId?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  calendarEvents?: any;
 }
 
 @Injectable()
@@ -141,18 +148,28 @@ export class TaskPlanService {
 
       // Validate for overlaps
       const overlaps = this.detectOverlaps(currentPlan.subtasks, existingEvents);
+      
+      // ⚠️ NEW: Validate for duplicate tasks on same day (same goal, same day)
+      const duplicates = this.detectDuplicateTasks(currentPlan.subtasks);
 
-      if (overlaps.length === 0) {
-        console.log('✅ No overlaps detected, plan is valid!');
+      if (overlaps.length === 0 && duplicates.length === 0) {
+        console.log('✅ No overlaps or duplicates detected, plan is valid!');
         taskPlan = currentPlan;
         break;
       }
 
-      console.warn(`⚠️ Detected ${overlaps.length} overlaps on attempt ${attempts}:`);
-      overlaps.forEach(overlap => console.warn(`  - ${overlap}`));
+      if (duplicates.length > 0) {
+        console.warn(`⚠️ Detected ${duplicates.length} duplicate tasks on same day:`);
+        duplicates.forEach(dup => console.warn(`  - ${dup}`));
+      }
 
-      // Store overlaps for next attempt
-      previousOverlaps = overlaps;
+      if (overlaps.length > 0) {
+        console.warn(`⚠️ Detected ${overlaps.length} overlaps on attempt ${attempts}:`);
+        overlaps.forEach(overlap => console.warn(`  - ${overlap}`));
+      }
+
+      // Store overlaps AND duplicates for next attempt
+      previousOverlaps = [...overlaps, ...duplicates];
 
       if (attempts === maxAttempts) {
         // Add overlaps to conflicts section with helpful suggestions
@@ -179,7 +196,7 @@ export class TaskPlanService {
     }
 
     // Save task plan to database
-    await this.prisma.taskPlan.create({
+    const savedPlan = await this.prisma.taskPlan.create({
       data: {
         userId,
         goalId,
@@ -189,7 +206,16 @@ export class TaskPlanService {
       },
     });
 
-    return taskPlan;
+    // ✅ Return the complete plan from database (with id, status, userId, etc.)
+    return {
+      ...taskPlan,
+      id: savedPlan.id,
+      status: savedPlan.status,
+      userId: savedPlan.userId,
+      goalId: savedPlan.goalId,
+      createdAt: savedPlan.createdAt,
+      updatedAt: savedPlan.updatedAt,
+    };
   }
 
   /**
@@ -201,38 +227,253 @@ export class TaskPlanService {
     for (const task of subtasks) {
       if (!task.suggestedStart || !task.suggestedEnd) continue;
 
-      const taskStart = new Date(task.suggestedStart).getTime();
-      const taskEnd = new Date(task.suggestedEnd).getTime();
+      // Se il task ha recurrence, espandi tutte le istanze
+      const taskInstances = this.expandRecurrence(
+        task.suggestedStart,
+        task.suggestedEnd,
+        task.recurrence
+      );
 
-      for (const event of existingEvents) {
-        const eventStart = new Date(event.start).getTime();
-        const eventEnd = new Date(event.end).getTime();
-
-        // Check for overlap: (taskStart < eventEnd) AND (taskEnd > eventStart)
-        if (taskStart < eventEnd && taskEnd > eventStart) {
-          const taskStartStr = new Date(taskStart).toLocaleString('it-IT', { 
-            weekday: 'short', 
-            day: 'numeric', 
-            month: 'short', 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
-          const eventStartStr = new Date(eventStart).toLocaleString('it-IT', { 
-            weekday: 'short', 
-            day: 'numeric', 
-            month: 'short', 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
+      // Controlla ogni istanza del task contro tutti gli eventi
+      for (const [taskStart, taskEnd] of taskInstances) {
+        for (const event of existingEvents) {
+          const eventStart = new Date(event.start).getTime();
+          const eventEnd = new Date(event.end).getTime();
           
-          overlaps.push(
-            `Task "${task.title}" (${taskStartStr}) si sovrappone con evento "${event.title}" (${eventStartStr})`
-          );
+          // Buffer di 15 minuti (900000 ms)
+          const buffer = 15 * 60 * 1000;
+
+          // Check for overlap WITH BUFFER: (taskStart < eventEnd + buffer) AND (taskEnd > eventStart - buffer)
+          if (taskStart < eventEnd + buffer && taskEnd > eventStart - buffer) {
+            const taskStartStr = new Date(taskStart).toLocaleString('it-IT', { 
+              weekday: 'short', 
+              day: 'numeric', 
+              month: 'short', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            });
+            const taskEndStr = new Date(taskEnd).toLocaleString('it-IT', { 
+              weekday: 'short', 
+              day: 'numeric', 
+              month: 'short', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            });
+            const eventStartStr = new Date(eventStart).toLocaleString('it-IT', { 
+              weekday: 'short', 
+              day: 'numeric', 
+              month: 'short', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            });
+            const eventEndStr = new Date(eventEnd).toLocaleString('it-IT', { 
+              weekday: 'short', 
+              day: 'numeric', 
+              month: 'short', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            });
+            
+            overlaps.push(
+              `Task "${task.title}" (${taskStartStr} - ${taskEndStr}) si sovrappone con evento "${event.title}" (${eventStartStr} - ${eventEndStr})`
+            );
+            
+            // 🔍 DEBUG: Log dettagliato della sovrapposizione
+            console.log(`🔍 OVERLAP DETECTED:
+  Task: "${task.title}" 
+  Task Time: ${new Date(taskStart).toISOString()} - ${new Date(taskEnd).toISOString()}
+  Event: "${event.title}"
+  Event Time: ${new Date(eventStart).toISOString()} - ${new Date(eventEnd).toISOString()}
+  Buffer: ${buffer}ms (15 minutes)
+  taskStart (${taskStart}) < eventEnd + buffer (${eventEnd + buffer})? ${taskStart < eventEnd + buffer}
+  taskEnd (${taskEnd}) > eventStart - buffer (${eventStart - buffer})? ${taskEnd > eventStart - buffer}`);
+          }
         }
       }
     }
 
     return overlaps;
+  }
+
+  /**
+   * Detect if multiple subtasks are scheduled on the same day
+   * This is usually undesired (unless explicitly requested by user)
+   */
+  private detectDuplicateTasks(subtasks: Subtask[]): string[] {
+    const duplicates: string[] = [];
+    const tasksByDay = new Map<string, Subtask[]>();
+
+    // Group tasks by day
+    for (const task of subtasks) {
+      if (!task.suggestedStart) continue;
+
+      const startDate = new Date(task.suggestedStart);
+      const dayKey = `${startDate.getFullYear()}-${startDate.getMonth() + 1}-${startDate.getDate()}`;
+
+      if (!tasksByDay.has(dayKey)) {
+        tasksByDay.set(dayKey, []);
+      }
+      tasksByDay.get(dayKey)!.push(task);
+    }
+
+    // Check for duplicates (more than 1 task on same day)
+    for (const [, tasks] of tasksByDay.entries()) {
+      if (tasks.length > 1) {
+        const firstTask = tasks[0];
+        if (!firstTask || !firstTask.suggestedStart) continue;
+        
+        const date = new Date(firstTask.suggestedStart);
+        const dateStr = date.toLocaleDateString('it-IT', { 
+          weekday: 'long', 
+          day: 'numeric', 
+          month: 'long' 
+        });
+        
+        const taskTitles = tasks.map(t => `"${t.title}"`).join(', ');
+        duplicates.push(
+          `⚠️ Più task nello stesso giorno (${dateStr}): ${taskTitles}. L'utente ha chiesto "1 evento per giornata" - usa eventi RICORRENTI invece di eventi separati!`
+        );
+      }
+    }
+
+    return duplicates;
+  }
+
+  /**
+   * Espande un evento ricorrente in tutte le sue istanze individuali
+   */
+  private expandRecurrence(
+    startISO: string,
+    endISO: string,
+    recurrence?: {
+      frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+      interval?: number;
+      byDay?: string[];
+      until?: string;
+    }
+  ): Array<[number, number]> {
+    const start = new Date(startISO);
+    const end = new Date(endISO);
+    const duration = end.getTime() - start.getTime();
+    const instances: Array<[number, number]> = [];
+
+    // Se non c'è recurrence, ritorna solo l'istanza singola
+    if (!recurrence) {
+      instances.push([start.getTime(), end.getTime()]);
+      return instances;
+    }
+
+    const until = recurrence.until ? new Date(recurrence.until) : new Date(start.getTime() + 365 * 24 * 60 * 60 * 1000); // max 1 anno
+    const interval = recurrence.interval || 1;
+
+    let currentDate = new Date(start);
+
+    // Espandi in base alla frequenza
+    while (currentDate <= until) {
+      if (recurrence.frequency === 'WEEKLY' && recurrence.byDay) {
+        // Per ogni giorno della settimana specificato
+        for (const day of recurrence.byDay) {
+          const dayIndex = this.getDayIndex(day);
+          const targetDate = new Date(currentDate);
+          const currentDay = targetDate.getDay();
+          const daysToAdd = (dayIndex - currentDay + 7) % 7;
+          targetDate.setDate(targetDate.getDate() + daysToAdd);
+
+          // Controlla se questa istanza è nel range
+          if (targetDate >= start && targetDate <= until) {
+            const instanceStart = new Date(targetDate);
+            instanceStart.setHours(start.getHours(), start.getMinutes(), 0, 0);
+            const instanceEnd = new Date(instanceStart.getTime() + duration);
+            
+            instances.push([instanceStart.getTime(), instanceEnd.getTime()]);
+          }
+        }
+        // Vai alla prossima settimana (interval settimane)
+        currentDate.setDate(currentDate.getDate() + (7 * interval));
+      } else if (recurrence.frequency === 'DAILY') {
+        const instanceStart = new Date(currentDate);
+        const instanceEnd = new Date(instanceStart.getTime() + duration);
+        instances.push([instanceStart.getTime(), instanceEnd.getTime()]);
+        currentDate.setDate(currentDate.getDate() + interval);
+      } else if (recurrence.frequency === 'MONTHLY') {
+        const instanceStart = new Date(currentDate);
+        const instanceEnd = new Date(instanceStart.getTime() + duration);
+        instances.push([instanceStart.getTime(), instanceEnd.getTime()]);
+        currentDate.setMonth(currentDate.getMonth() + interval);
+      }
+    }
+
+    return instances;
+  }
+
+  /**
+   * Converte abbreviazione giorno (MO, TU, etc.) in indice (0=Domenica, 1=Lunedì, etc.)
+   */
+  private getDayIndex(dayAbbr: string): number {
+    const map: { [key: string]: number } = {
+      'SU': 0,
+      'MO': 1,
+      'TU': 2,
+      'WE': 3,
+      'TH': 4,
+      'FR': 5,
+      'SA': 6,
+    };
+    return map[dayAbbr] ?? 1;
+  }
+
+  /**
+   * Valida che un evento sia in un orario realistico e sostenibile
+   */
+  private validateRealisticTime(startDate: Date, endDate: Date): { valid: boolean; reason?: string } {
+    const startHour = startDate.getHours();
+    const startMinute = startDate.getMinutes();
+    const endHour = endDate.getHours();
+    const endMinute = endDate.getMinutes();
+    
+    // 1. Orari notturni vietati (00:00-06:00)
+    if (startHour >= 0 && startHour < 6) {
+      return {
+        valid: false,
+        reason: `Orario notturno non valido (${startHour}:${startMinute.toString().padStart(2, '0')}). Gli eventi devono iniziare dopo le 06:00.`
+      };
+    }
+    
+    // 2. Eventi che finiscono di notte
+    if (endHour >= 0 && endHour < 6) {
+      return {
+        valid: false,
+        reason: `L'evento termina di notte (${endHour}:${endMinute.toString().padStart(2, '0')}). Gli eventi devono terminare prima delle 23:59 o dopo le 06:00.`
+      };
+    }
+    
+    // 3. Eventi troppo tardi (inizio dopo le 23:00)
+    if (startHour >= 23) {
+      return {
+        valid: false,
+        reason: `Orario di inizio troppo tardo (${startHour}:${startMinute.toString().padStart(2, '0')}). Gli eventi devono iniziare prima delle 23:00.`
+      };
+    }
+    
+    // 4. Durata minima (almeno 15 minuti)
+    const durationMs = endDate.getTime() - startDate.getTime();
+    const durationMinutes = durationMs / (1000 * 60);
+    if (durationMinutes < 15) {
+      return {
+        valid: false,
+        reason: `Durata troppo breve (${Math.round(durationMinutes)} minuti). Gli eventi devono durare almeno 15 minuti.`
+      };
+    }
+    
+    // 5. Durata massima ragionevole (max 12 ore per singolo evento)
+    if (durationMinutes > 12 * 60) {
+      return {
+        valid: false,
+        reason: `Durata eccessiva (${Math.round(durationMinutes / 60)} ore). Gli eventi non dovrebbero superare le 12 ore.`
+      };
+    }
+    
+    return { valid: true };
   }
 
   private buildPrompt(
@@ -305,9 +546,75 @@ Ore già occupate: ${Math.round(occupiedHours)}h
 Ore disponibili: ${Math.round(availableHours)}h (${Math.round(availableHours * 60)} minuti)
 
 ═══════════════════════════════════════════════════════════════════
-� SLOT TEMPORALI OCCUPATI (NON USARE MAI)
+🚫 SLOT TEMPORALI OCCUPATI (NON USARE MAI)
 ═══════════════════════════════════════════════════════════════════
 ${eventsAnalysis}
+
+═══════════════════════════════════════════════════════════════════
+⚠️ VINCOLI ASSOLUTI - ORARI NON DISPONIBILI
+═══════════════════════════════════════════════════════════════════
+
+⛔ REGOLA CRITICA: NON puoi schedulare NULLA durante gli slot occupati sopra!
+
+🕐 ORARI REALISTICI E SOSTENIBILI:
+
+1. ORARI VIETATI (NON schedulare MAI in questi orari):
+   - 🌙 Notte: 00:00-06:00 (riposo notturno)
+   - 🌙 Tarda notte: 23:00-23:59 (troppo tardi per iniziare attività)
+   
+2. ORARI SCONSIGLIATI (usa SOLO se strettamente necessario):
+   - 🌅 Mattina presto: 06:00-07:00 (difficile svegliarsi)
+   - 🌆 Sera tardi: 22:00-23:00 (meglio evitare)
+
+3. ORARI IDEALI (preferisci questi):
+   - ☀️ Mattina: 08:00-12:00 (se disponibile)
+   - 🌤️ Pomeriggio: 14:00-18:00 (se disponibile)
+   - 🌆 Sera: 18:00-22:00 (se disponibile)
+   - 🏖️ Weekend: 09:00-20:00 (più flessibilità)
+
+4. BUFFER TRA EVENTI (FONDAMENTALE):
+   - ⚠️ Minimo 15 minuti tra eventi (per spostamenti/pause)
+   - ⚠️ Se evento precedente finisce alle 18:00, il prossimo inizia DOPO le 18:15
+   - ⚠️ NON schedulare eventi "back-to-back" senza pausa
+   - ⚠️ Se serve spostarsi fisicamente (es: palestra dopo lavoro), lascia 30-60 minuti
+
+5. CONFLITTI CON EVENTI ESISTENTI:
+   - 🚫 Se vedi "Lavoro 09:00-18:00" → NON schedulare tra 09:00-18:00
+   - ✅ Puoi schedulare DOPO (es: 18:30-20:00 per un allenamento)
+   - 🚫 Se vedi "Cena 20:00-21:00" → NON schedulare in quell'orario
+   - ✅ Puoi schedulare PRIMA (es: 18:00-19:30) o DOPO (es: 21:30-23:00)
+
+⚠️ ESEMPI PRATICI:
+
+✅ CORRETTO:
+- Evento esistente: "Lavoro 09:00-18:00 Lun-Ven"
+- Nuovo evento: "Palestra 18:30-20:00 Lun" (dopo lavoro + 30min buffer)
+
+✅ CORRETTO:
+- Evento esistente: "Riunione 10:00-11:00 Mar"
+- Nuovo evento: "Studio 11:30-13:00 Mar" (dopo riunione + 30min buffer)
+
+❌ SBAGLIATO:
+- Evento esistente: "Lavoro 09:00-18:00 Lun-Ven"
+- Nuovo evento: "Studio 10:00-12:00 Lun" (CONFLITTO CON LAVORO!)
+
+❌ SBAGLIATO:
+- Evento esistente: "Cena 20:00-21:00"
+- Nuovo evento: "Corso 20:30-22:00" (CONFLITTO CON CENA!)
+
+❌ SBAGLIATO:
+- Evento esistente: "Riunione 15:00-16:00"
+- Nuovo evento: "Palestra 16:00-17:00" (NO BUFFER! Serve almeno 16:15)
+
+❌ SBAGLIATO:
+- Nuovo evento: "Studio 02:00-04:00" (ORARIO NOTTURNO VIETATO!)
+
+⚠️ SE NON TROVI SLOT LIBERI:
+- Usa le sere (18:30-22:00) rispettando i buffer
+- Usa i weekend (09:00-20:00)
+- Riduci la durata degli eventi
+- Distribuisci su più giorni
+- ⚠️ NON schedulare mai in orari occupati o notturni!
 
 ═══════════════════════════════════════════════════════════════════
 📝 ISTRUZIONI OBBLIGATORIE
@@ -359,6 +666,12 @@ ${eventsAnalysis}
    - La tendenza DEVE essere quella di rispettare le indicazioni dell'utente, NON massimizzare l'uso del tempo
    - Se l'utente vuole più eventi, li richiederà esplicitamente
    
+   ⚠️⚠️⚠️ REGOLA CRITICA - UN OBIETTIVO PER GIORNO:
+   - Se stai schedulando eventi per questo obiettivo, NON metterli nello stesso giorno più volte
+   - Ogni evento ricorrente dovrebbe occupare giorni DIVERSI
+   - Esempio: Se crei "Allenamento" 2x/settimana → byDay: ["MO", "TH"] (Lunedì E Giovedì, NON due eventi Lunedì)
+   - ⚠️ ECCEZIONE: Se il calendario è così pieno che non c'è altra scelta
+   
    AGGIUNGI EVENTI EXTRA NELLO STESSO GIORNO SOLO SE:
    - L'utente lo richiede esplicitamente
    - Il calendario è così pieno che non c'è altra scelta
@@ -366,13 +679,65 @@ ${eventsAnalysis}
    
    DEFAULT: 1 evento principale per giorno, distribuito secondo la frequenza ESATTA richiesta
 
-3. RAGGRUPPA INTELLIGENTEMENTE
-   - Se un'attività si ripete → USA 1 EVENTO RICORRENTE (non N eventi separati)
+3. RAGGRUPPA INTELLIGENTEMENTE - REGOLA FONDAMENTALE
+   
+   ⚠️⚠️⚠️ DISTINGUI TRA EVENTI SINGOLI E RICORRENTI:
+   
+   CASO A - ATTIVITÀ CHE SI RIPETE (USA 1 EVENTO RICORRENTE):
+   - Se l'utente dice "1 evento a settimana" → Crea 1 SOLO subtask con recurrence
+   - Se l'utente dice "2 volte a settimana" → Crea 1 SOLO subtask con recurrence (byDay: 2 giorni)
+   - Se l'utente dice "quotidiano" → Crea 1 SOLO subtask con recurrence DAILY
+   
+   ESEMPIO CORRETTO - "1 evento a settimana per 4 settimane":
+   ✅ JSON OUTPUT:
+   {
+     "subtasks": [
+       {
+         "title": "Sessione Studio Deep Learning",
+         "estimatedDuration": 60,
+         "suggestedStart": "2025-11-05T15:00:00.000Z",
+         "suggestedEnd": "2025-11-05T16:00:00.000Z",
+         "recurrence": {
+           "frequency": "WEEKLY",
+           "byDay": ["TU"],  // ← UN SOLO GIORNO perché è 1/settimana
+           "until": "2025-11-30T23:59:59.000Z"
+         }
+       }
+     ]
+   }
+   → Questo creerà 4 eventi (1 per settimana) automaticamente!
+   
+   ESEMPIO SBAGLIATO - "1 evento a settimana":
+   ❌ JSON OUTPUT:
+   {
+     "subtasks": [
+       { "title": "Studio 1", "suggestedStart": "2025-11-05T15:00:00.000Z", ... },
+       { "title": "Studio 2", "suggestedStart": "2025-11-12T15:00:00.000Z", ... },
+       { "title": "Studio 3", "suggestedStart": "2025-11-19T15:00:00.000Z", ... }
+     ]
+   }
+   → Questo crea 3 subtask SEPARATI invece di 1 ricorrente!
+   
+   CASO B - ATTIVITÀ DIVERSE (USA PIÙ EVENTI SEPARATI):
+   - Solo se sono attività DIVERSE (es: Fase 1, Fase 2, Fase 3)
+   - Solo se NON si ripetono con pattern regolare
+   
+   ESEMPIO CORRETTO - Progetto con fasi diverse:
+   ✅ JSON OUTPUT:
+   {
+     "subtasks": [
+       { "title": "Fase 1: Ricerca", "suggestedStart": "2025-11-05T15:00:00.000Z", ... },
+       { "title": "Fase 2: Implementazione", "suggestedStart": "2025-11-12T15:00:00.000Z", ... },
+       { "title": "Fase 3: Testing", "suggestedStart": "2025-11-19T15:00:00.000Z", ... }
+     ]
+   }
+   → OK perché sono attività DIVERSE
+   
+   ⚠️ REGOLA D'ORO:
+   - Se l'utente dice "X volte a settimana" → 1 SOLO subtask con recurrence
+   - Se l'utente descrive fasi diverse → N subtask separati (senza recurrence)
    - Durata ideale per evento: 60-180 minuti (sessioni produttive)
    - Raggruppa attività correlate in macro-blocchi
-   - Esempi:
-     ✅ "Allenamento Upper Body" ripetuto (4x/settimana se richiesto)
-     ❌ 7 eventi separati quando l'utente ha chiesto 4/settimana
 
 4. SCHEDULAZIONE SENZA SOVRAPPOSIZIONI (ALGORITMO RIGIDO)
    
@@ -591,7 +956,7 @@ La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
               content: prompt,
             },
           ],
-          temperature: 0.7,
+          temperature: 0.3,
           max_tokens: 10000, // Increased for complex scheduling logic
         }),
       });
@@ -771,20 +1136,78 @@ La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
       throw new Error('Task plan not found');
     }
 
+    // ⚠️ STEP 1: Fetch ALL existing events from Google Calendar (not from DB!)
+    console.log('🔍 Fetching existing events from Google Calendar for final validation...');
+    const now = new Date();
+    const oneYearFromNow = new Date(now);
+    oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+    
+    const existingGoogleEvents = await this.calendarService.getEvents(userId, {
+      timeMin: now,
+      timeMax: oneYearFromNow,
+      maxResults: 2500, // Get all events
+    });
+
+    // Transform Google Calendar events to our format
+    const existingEvents = existingGoogleEvents.map((event: any) => ({
+      id: event.id,
+      title: event.summary || 'Untitled Event',
+      start: event.start.dateTime || event.start.date,
+      end: event.end.dateTime || event.end.date,
+      isRecurring: !!event.recurrence,
+    }));
+
+    console.log(`📅 Found ${existingEvents.length} existing events in Google Calendar`);
+
     const subtasks = taskPlan.subtasks as any as Subtask[];
     const createdEvents = [];
+    const skippedEvents = [];
     const calendarEventsMap: Record<number, string> = {}; // Map subtask index to event ID
 
-    // Create calendar events for each subtask
+    // ⚠️ STEP 2: Create calendar events ONLY if they don't overlap
     for (let i = 0; i < subtasks.length; i++) {
       const subtask = subtasks[i];
       
       if (!subtask || !subtask.suggestedStart || !subtask.suggestedEnd) {
-        console.warn(`Skipping subtask at index ${i} - no suggested time or undefined`);
+        console.warn(`⏭️ Skipping subtask at index ${i} - no suggested time or undefined`);
         continue;
       }
 
       try {
+        // ⚠️ STEP 1: Validate realistic time slots
+        const startDate = new Date(subtask.suggestedStart);
+        const endDate = new Date(subtask.suggestedEnd);
+        
+        // Check for unrealistic time slots
+        const timeValidation = this.validateRealisticTime(startDate, endDate);
+        if (!timeValidation.valid) {
+          console.error(`❌ BLOCKED: Event "${subtask.title}" has unrealistic time slot: ${timeValidation.reason}`);
+          skippedEvents.push({
+            subtaskTitle: subtask.title,
+            start: subtask.suggestedStart,
+            reason: timeValidation.reason,
+          });
+          continue;
+        }
+        
+        // ⚠️ STEP 2: Validate this specific subtask against ALL existing events
+        const overlaps = this.detectOverlaps([subtask], existingEvents);
+        
+        if (overlaps.length > 0) {
+          console.error(`❌ BLOCKED: Event "${subtask.title}" would overlap with existing events:`);
+          overlaps.forEach(overlap => console.error(`   - ${overlap}`));
+          
+          skippedEvents.push({
+            subtaskTitle: subtask.title,
+            start: subtask.suggestedStart,
+            reason: 'Overlap detected',
+            overlaps: overlaps,
+          });
+          
+          // ⚠️ DO NOT CREATE THIS EVENT - skip to next
+          continue;
+        }
+
         // Build recurrence rules if specified
         let recurrenceRules: string[] | undefined;
         if (subtask.recurrence) {
@@ -795,6 +1218,7 @@ La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
           }
         }
 
+        // ✅ No overlaps - safe to create
         const event = await this.calendarService.createEvent(userId, {
           summary: `${taskPlan.goal.title}: ${subtask.title}`,
           description: `${subtask.description}\n\n📋 Parte dell'obiettivo: ${taskPlan.goal.title}\n⏱️ Durata stimata: ${subtask.estimatedDuration} minuti\n🎯 Priorità: ${subtask.priority}${subtask.recurrence ? `\n🔁 Ricorrenza: ${this.formatRecurrence(subtask.recurrence)}` : ''}`,
@@ -817,8 +1241,24 @@ La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
         });
 
         console.log(`✅ Created calendar event for: ${subtask.title}${subtask.recurrence ? ' (RECURRING)' : ''}`);
+        
+        // ⚠️ IMPORTANT: Add this newly created event to existingEvents 
+        // so next iterations check against it too!
+        existingEvents.push({
+          id: event.id || `temp-${i}`,
+          title: `${taskPlan.goal.title}: ${subtask.title}`,
+          start: subtask.suggestedStart,
+          end: subtask.suggestedEnd,
+          isRecurring: !!subtask.recurrence,
+        });
+        
       } catch (error) {
-        console.error(`Failed to create event for subtask "${subtask.title}":`, error);
+        console.error(`❌ Failed to create event for subtask "${subtask.title}":`, error);
+        skippedEvents.push({
+          subtaskTitle: subtask.title,
+          start: subtask.suggestedStart,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
       }
     }
 
@@ -831,10 +1271,19 @@ La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
       },
     });
 
+    // ⚠️ Log summary
+    if (skippedEvents.length > 0) {
+      console.warn(`⚠️ ${skippedEvents.length} eventi sono stati SALTATI per sovrapposizioni:`);
+      skippedEvents.forEach(skipped => {
+        console.warn(`   - ${skipped.subtaskTitle} (${skipped.reason})`);
+      });
+    }
+
     return {
       success: true,
       createdEvents,
-      message: `${createdEvents.length}/${subtasks.length} eventi creati sul calendario`,
+      skippedEvents,
+      message: `${createdEvents.length}/${subtasks.length} eventi creati sul calendario${skippedEvents.length > 0 ? ` (${skippedEvents.length} saltati per sovrapposizioni)` : ''}`,
     };
   }
 

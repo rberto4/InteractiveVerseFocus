@@ -133,7 +133,8 @@ export function GoalsView() {
 
     try {
       const plan = await taskPlanService.generatePlan(goalId);
-      setTaskPlans({ ...taskPlans, [goalId]: plan });
+      // ✅ Use functional update to avoid stale closure
+      setTaskPlans(prev => ({ ...prev, [goalId]: plan }));
     } catch (err) {
       console.error('Failed to generate AI plan:', err);
       setError(err instanceof Error ? err.message : 'Errore nella generazione AI');
@@ -300,7 +301,8 @@ export function GoalsView() {
 
     try {
       const newPlan = await taskPlanService.regeneratePlan(goalId);
-      setTaskPlans({ ...taskPlans, [goalId]: newPlan });
+      // ✅ Use functional update to avoid stale closure
+      setTaskPlans(prev => ({ ...prev, [goalId]: newPlan }));
       alert(`✅ Piano rigenerato con successo!\n\n${(newPlan as any).deletedEventsCount || 0} eventi precedenti eliminati.`);
     } catch (err) {
       console.error('Failed to regenerate plan:', err);
