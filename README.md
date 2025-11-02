@@ -285,9 +285,21 @@ Create `.env` files in both `packages/backend` and `packages/extension`:
 
 **Backend `.env`:**
 ```env
-DATABASE_URL="postgresql://user:password@localhost:5432/interactiverse"
+# Database Configuration (varies by OS)
+# 🍎 macOS (Homebrew PostgreSQL - no password)
+DATABASE_URL="postgresql://YOUR_MAC_USERNAME@localhost:5432/interactiverse"
+# Replace YOUR_MAC_USERNAME with output of: whoami
+
+# 🐧 Linux / 🪟 Windows (requires password)
+# DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/interactiverse"
+
+# 🐳 Docker (recommended for cross-platform)
+# DATABASE_URL="postgresql://postgres:postgres@localhost:5432/interactiverse"
+
 GOOGLE_CLIENT_ID="your-google-oauth-client-id"
 GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
+GOOGLE_REDIRECT_URI="http://localhost:3000/auth/google/callback"
+EXTENSION_ID="your-extension-id"
 OPENROUTER_API_KEY="your-openrouter-api-key"
 JWT_SECRET="your-jwt-secret"
 PORT=3000
@@ -298,7 +310,109 @@ PORT=3000
 VITE_API_URL="http://localhost:3000"
 ```
 
-4. **Setup database**
+4. **Setup PostgreSQL Database**
+
+Choose the method for your operating system:
+
+<details>
+<summary>🍎 <strong>macOS (Homebrew)</strong></summary>
+
+```bash
+# Install PostgreSQL
+brew install postgresql@15
+
+# Start service
+brew services start postgresql@15
+
+# Create database
+createdb interactiverse
+
+# DATABASE_URL: postgresql://YOUR_MAC_USERNAME@localhost:5432/interactiverse
+# (no password needed)
+```
+</details>
+
+<details>
+<summary>🐧 <strong>Linux (Ubuntu/Debian)</strong></summary>
+
+```bash
+# Install PostgreSQL
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+
+# Start service
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+
+# Create database and user
+sudo -u postgres psql
+```
+
+In PostgreSQL shell:
+```sql
+CREATE DATABASE interactiverse;
+CREATE USER your_username WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE interactiverse TO your_username;
+\q
+```
+
+```bash
+# DATABASE_URL: postgresql://your_username:your_password@localhost:5432/interactiverse
+```
+</details>
+
+<details>
+<summary>🪟 <strong>Windows</strong></summary>
+
+1. Download from: https://www.postgresql.org/download/windows/
+2. Run installer (remember the password!)
+3. Add to PATH: `C:\Program Files\PostgreSQL\15\bin`
+
+```cmd
+# Create database (in Command Prompt)
+psql -U postgres
+CREATE DATABASE interactiverse;
+\q
+```
+
+```bash
+# DATABASE_URL: postgresql://postgres:YOUR_PASSWORD@localhost:5432/interactiverse
+```
+</details>
+
+<details>
+<summary>🐳 <strong>Docker (Cross-platform - Recommended)</strong></summary>
+
+Create `docker-compose.yml` in project root:
+
+```yaml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: interactiverse_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: interactiverse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+```
+
+```bash
+# Start database
+docker-compose up -d
+
+# DATABASE_URL: postgresql://postgres:postgres@localhost:5432/interactiverse
+```
+</details>
+
+5. **Run database migrations**
 
 ```bash
 cd packages/backend
@@ -306,7 +420,7 @@ pnpm prisma migrate dev
 pnpm prisma generate
 ```
 
-5. **Start development servers**
+6. **Start development servers**
 
 ```bash
 # Terminal 1: Backend API
@@ -318,7 +432,7 @@ cd packages/extension
 pnpm dev
 ```
 
-6. **Load extension in browser**
+7. **Load extension in browser**
 
 - Chrome: Navigate to `chrome://extensions/`, enable "Developer mode", click "Load unpacked", select `packages/extension/dist`
 - Firefox: Navigate to `about:debugging#/runtime/this-firefox`, click "Load Temporary Add-on", select `packages/extension/dist/manifest.json`
