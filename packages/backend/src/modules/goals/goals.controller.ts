@@ -42,6 +42,11 @@ export class GoalsController {
       throw new BadRequestException('No file uploaded');
     }
 
+    // Convert allowRecurrence from string to boolean (FormData sends strings)
+    if (typeof (createGoalDto as any).allowRecurrence === 'string') {
+      (createGoalDto as any).allowRecurrence = (createGoalDto as any).allowRecurrence === 'true';
+    }
+
     // Validate file type
     const allowedTypes = [
       'application/pdf',

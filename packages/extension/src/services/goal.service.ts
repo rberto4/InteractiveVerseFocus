@@ -10,6 +10,7 @@ export interface Goal {
   attachedFileName?: string;
   attachedFileType?: string;
   extractedContent?: string;
+  allowRecurrence?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -19,6 +20,7 @@ export interface CreateGoalData {
   description?: string;
   deadline: Date;
   priority?: 'low' | 'medium' | 'high';
+  allowRecurrence?: boolean;
 }
 
 export interface UpdateGoalData {
@@ -27,6 +29,7 @@ export interface UpdateGoalData {
   deadline?: Date;
   priority?: 'low' | 'medium' | 'high';
   status?: 'active' | 'completed' | 'cancelled';
+  allowRecurrence?: boolean;
 }
 
 class GoalService {
@@ -58,6 +61,7 @@ class GoalService {
         description: data.description,
         deadline: data.deadline.toISOString(),
         priority: data.priority || 'medium',
+        allowRecurrence: data.allowRecurrence ?? true, // Include allowRecurrence field
       }),
     });
 
@@ -164,6 +168,7 @@ class GoalService {
     }
     formData.append('deadline', data.deadline.toISOString());
     formData.append('priority', data.priority || 'medium');
+    formData.append('allowRecurrence', String(data.allowRecurrence ?? true)); // Include allowRecurrence field
 
     const response = await fetch(`${API_BASE_URL}/goals/with-file`, {
       method: 'POST',

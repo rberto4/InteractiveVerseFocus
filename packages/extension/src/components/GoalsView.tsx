@@ -24,6 +24,7 @@ export function GoalsView() {
     description: '',
     deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Default: 7 days from now
     priority: 'medium',
+    allowRecurrence: true, // Default: allow recurring events
   });
 
   useEffect(() => {
@@ -78,6 +79,7 @@ export function GoalsView() {
         description: '',
         deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         priority: 'medium',
+        allowRecurrence: true, // Reset to default
       });
       setSelectedFile(null);
       await loadGoals();
@@ -466,7 +468,7 @@ export function GoalsView() {
             />
           </div>
 
-          <div className="mb-4">
+          <div className="mb-3">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Priorità
             </label>
@@ -479,6 +481,36 @@ export function GoalsView() {
               <option value="medium">Media</option>
               <option value="high">Alta</option>
             </select>
+          </div>
+
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex-1">
+              <label htmlFor="allowRecurrence" className="text-sm font-medium text-gray-700 cursor-pointer">
+                🔄 Eventi ricorrenti settimanali
+              </label>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Permetti all'AI di creare eventi che si ripetono
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={formData.allowRecurrence}
+              onClick={() => setFormData({ ...formData, allowRecurrence: !formData.allowRecurrence })}
+              className={`
+                relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent 
+                transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2
+                ${formData.allowRecurrence ? 'bg-indigo-600' : 'bg-gray-200'}
+              `}
+            >
+              <span
+                className={`
+                  pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 
+                  transition duration-200 ease-in-out
+                  ${formData.allowRecurrence ? 'translate-x-5' : 'translate-x-0'}
+                `}
+              />
+            </button>
           </div>
 
           <div className="flex space-x-2">

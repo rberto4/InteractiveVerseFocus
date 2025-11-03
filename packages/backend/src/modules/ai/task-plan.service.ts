@@ -151,9 +151,16 @@ export class TaskPlanService {
       
       // ⚠️ NEW: Validate for duplicate tasks on same day (same goal, same day)
       const duplicates = this.detectDuplicateTasks(currentPlan.subtasks);
+      
+      // ⚠️ NEW: Validate for invalid recurring events ONLY if user disabled allowRecurrence
+      console.log(`🔍 Goal allowRecurrence value: ${(goal as any).allowRecurrence} (type: ${typeof (goal as any).allowRecurrence})`);
+      const invalidRecurrence = (goal as any).allowRecurrence === false 
+        ? this.detectInvalidRecurrence(currentPlan.subtasks)
+        : [];
+      console.log(`🔍 invalidRecurrence array length: ${invalidRecurrence.length}`);
 
-      if (overlaps.length === 0 && duplicates.length === 0) {
-        console.log('✅ No overlaps or duplicates detected, plan is valid!');
+      if (overlaps.length === 0 && duplicates.length === 0 && invalidRecurrence.length === 0) {
+        console.log('✅ No overlaps, duplicates, or invalid recurrence detected, plan is valid!');
         taskPlan = currentPlan;
         break;
       }
@@ -162,14 +169,19 @@ export class TaskPlanService {
         console.warn(`⚠️ Detected ${duplicates.length} duplicate tasks on same day:`);
         duplicates.forEach(dup => console.warn(`  - ${dup}`));
       }
+      
+      if (invalidRecurrence.length > 0) {
+        console.warn(`⚠️ Detected ${invalidRecurrence.length} invalid recurring events:`);
+        invalidRecurrence.forEach(err => console.warn(`  - ${err}`));
+      }
 
       if (overlaps.length > 0) {
         console.warn(`⚠️ Detected ${overlaps.length} overlaps on attempt ${attempts}:`);
         overlaps.forEach(overlap => console.warn(`  - ${overlap}`));
       }
 
-      // Store overlaps AND duplicates for next attempt
-      previousOverlaps = [...overlaps, ...duplicates];
+      // Store overlaps AND duplicates AND invalid recurrence for next attempt
+      previousOverlaps = [...overlaps, ...duplicates, ...invalidRecurrence];
 
       if (attempts === maxAttempts) {
         // Add overlaps to conflicts section with helpful suggestions
@@ -423,6 +435,47 @@ export class TaskPlanService {
   }
 
   /**
+   * Validate that recurring events should have the SAME title/purpose
+   * If we detect multiple subtasks with recurrence but different titles, it's likely an error
+   */
+  private detectInvalidRecurrence(subtasks: Subtask[]): string[] {
+    const errors: string[] = [];
+    
+    // Se ci sono più subtask con recurrence, probabilmente è sbagliato
+    const recurringTasks = subtasks.filter(t => t.recurrence);
+    
+    if (recurringTasks.length > 1) {
+      // Controlla se hanno titoli diversi (potrebbero essere fasi diverse)
+      const uniqueTitles = new Set(recurringTasks.map(t => t.title));
+      
+      if (uniqueTitles.size > 1) {
+        errors.push(
+          `ERRORE: Trovati ${recurringTasks.length} task ricorrenti con titoli DIVERSI: ${Array.from(uniqueTitles).join(', ')}. ` +
+          `Se sono FASI DIVERSE o ATTIVITÀ DIVERSE, NON devono avere recurrence. ` +
+          `Crea invece eventi SEPARATI senza recurrence, uno per ogni fase/attività. ` +
+          `La recurrence va usata SOLO quando la STESSA attività si ripete (es: "Allenamento" ogni settimana).`
+        );
+      }
+    }
+    
+    // Se un task ha recurrence e contiene indicatori di "fase" nel titolo, è probabilmente sbagliato
+    for (const task of recurringTasks) {
+      const phaseIndicators = ['fase', 'step', 'modulo', 'capitolo', 'parte', 'milestone', 'consegna', 'revisione', 'implementazione', 'analisi', 'testing', 'deploy'];
+      const lowerTitle = task.title.toLowerCase();
+      
+      if (phaseIndicators.some(indicator => lowerTitle.includes(indicator))) {
+        errors.push(
+          `ERRORE: Il task "${task.title}" ha recurrence ma sembra essere una FASE/STEP di un progetto. ` +
+          `Le fasi di un progetto NON devono avere recurrence. ` +
+          `Crea eventi SEPARATI senza recurrence per ogni fase.`
+        );
+      }
+    }
+    
+    return errors;
+  }
+
+  /**
    * Valida che un evento sia in un orario realistico e sostenibile
    */
   private validateRealisticTime(startDate: Date, endDate: Date): { valid: boolean; reason?: string } {
@@ -525,7 +578,12 @@ export class TaskPlanService {
       ? `\n\n🚨🚨🚨 ATTENZIONE - ERRORI RILEVATI NEL TENTATIVO PRECEDENTE:\n\nHai generato task che si SOVRAPPONGONO con eventi esistenti:\n\n${previousOverlaps.map(o => `❌ ${o}`).join('\n')}\n\n⚠️ DEVI CORREGGERE QUESTI ERRORI:\n- Sposta i task in conflitto in orari COMPLETAMENTE DIVERSI\n- Assicurati che NON ci sia sovrapposizione con gli eventi elencati sopra\n- Considera di spostare i task al pomeriggio, sera, o su altri giorni\n- Se necessario, riduci la durata o dividi il task in sessioni più piccole\n`
       : '';
 
-    return `Sei un AI planner esperto. Il tuo unico compito è suddividere l'obiettivo in subtask schedulati SENZA sovrapposizioni.${retryFeedback}
+    // Policy on recurring events based on user preference
+    const recurrencePolicy = (goal as any).allowRecurrence === false
+      ? `\n\n🚫 POLITICA EVENTI RICORRENTI:\n⚠️⚠️⚠️ L'UTENTE HA DISABILITATO GLI EVENTI RICORRENTI.\nNON creare NESSUN subtask con recurrence.\nOGNI attività deve essere un evento SINGOLO separato, anche se si ripete settimanalmente.\nSe l'utente dice "1 volta a settimana per 4 settimane", crea 4 subtask SEPARATI senza recurrence.\n`
+      : `\n\n🔄 POLITICA EVENTI RICORRENTI:\nL'utente CONSENTE eventi ricorrenti. Segui le regole descritte nella sezione "RAGGRUPPA INTELLIGENTEMENTE".\n`;
+
+    return `Sei un AI planner esperto. Il tuo unico compito è suddividere l'obiettivo in subtask schedulati SENZA sovrapposizioni.${retryFeedback}${recurrencePolicy}
 
 ═══════════════════════════════════════════════════════════════════
 📋 OBIETTIVO
@@ -620,9 +678,118 @@ ${eventsAnalysis}
 📝 ISTRUZIONI OBBLIGATORIE
 ═══════════════════════════════════════════════════════════════════
 
-1. ANALIZZA L'OBIETTIVO
+1. ANALIZZA L'OBIETTIVO E IDENTIFICA IL LIVELLO DI GRANULARITÀ
+   
+   ⚠️⚠️⚠️ REGOLA FONDAMENTALE - RAGGRUPPAMENTO INTELLIGENTE:
+   
+   Prima di creare i subtask, chiediti: "Qual è l'UNITÀ ATOMICA di lavoro che l'utente vuole schedulare?"
+   
+   🎯 PRINCIPIO CHIAVE: Un subtask = Una SESSIONE DI LAVORO completa e autonoma
+   
+   ✅ QUANDO RAGGRUPPARE (crea 1 subtask che contiene più elementi):
+   
+   CASO 1 - SESSIONE CON ATTIVITÀ MULTIPLE:
+   ❌ SBAGLIATO:
+   - Subtask 1: "Esercizio A"
+   - Subtask 2: "Esercizio B"
+   - Subtask 3: "Esercizio C"
+   → Problema: L'utente fa tutto nella STESSA sessione!
+   
+   ✅ CORRETTO:
+   - Subtask 1: "Sessione Completa"
+     Description: "Esercizio A, Esercizio B, Esercizio C"
+   → L'utente fa TUTTI questi elementi in UNA SOLA sessione
+   
+   ESEMPI CONCRETI:
+   - Allenamento: NON creare un subtask per ogni esercizio → Crea "Allenamento Lower Body" con tutti gli esercizi nella description
+   - Studio: NON creare un subtask per ogni paragrafo → Crea "Sessione Studio Capitolo 3" con tutti i contenuti nella description
+   - Coding: NON creare un subtask per ogni funzione → Crea "Implementazione Feature X" con tutte le funzioni nella description
+   - Riunione: NON creare un subtask per ogni punto → Crea "Meeting Team" con tutti i punti all'ordine del giorno nella description
+   
+   CASO 2 - ATTIVITÀ CON MICRO-TASK:
+   ❌ SBAGLIATO:
+   - Subtask 1: "Preparare slide 1"
+   - Subtask 2: "Preparare slide 2"
+   - Subtask 3: "Preparare slide 3"
+   → Problema: Si fanno tutte insieme nella stessa sessione!
+   
+   ✅ CORRETTO:
+   - Subtask 1: "Preparazione Presentazione"
+     Description: "Creare slide 1-3, aggiungere grafici, revisione contenuti"
+   → Raggruppa micro-attività che si fanno insieme
+   
+   🚫 QUANDO NON RAGGRUPPARE (crea subtask separati):
+   
+   CASO A - FASI/STEP SEQUENZIALI DIVERSI:
+   ✅ CORRETTO:
+   - Subtask 1: "Fase 1: Ricerca" (settimana 1)
+   - Subtask 2: "Fase 2: Sviluppo" (settimana 2)
+   - Subtask 3: "Fase 3: Validazione" (settimana 3)
+   → Sono FASI DIVERSE che avvengono in momenti DIVERSI
+   
+   CASO B - SESSIONI IN GIORNI/MOMENTI DIVERSI:
+   ✅ CORRETTO:
+   - Subtask 1: "Sessione Tipo A" (Lunedì)
+   - Subtask 2: "Sessione Tipo B" (Mercoledì)
+   - Subtask 3: "Sessione Tipo C" (Venerdì)
+   → Sono SESSIONI DIVERSE in MOMENTI DIVERSI
+   
+   ESEMPI CONCRETI:
+   - Progetto software: "Design", "Implementazione", "Testing", "Deploy" → 4 subtask separati
+   - Corso online: "Modulo 1", "Modulo 2", "Modulo 3" → 3 subtask separati
+   - Preparazione esame: "Studio teoria", "Esercizi pratici", "Simulazione" → 3 subtask separati
+   - Scheda allenamento: "Allenamento Upper", "Allenamento Lower", "Allenamento Full" → 3 subtask separati
+   
+   🎓 DOMANDE DA PORSI:
+   1. "L'utente fa queste cose nella STESSA sessione/blocco di tempo?"
+      → SÌ → RAGGRUPPA in 1 subtask
+      → NO → Crea subtask SEPARATI
+   
+   2. "Sono elementi che si completano INSIEME o in sequenza TEMPORALE separata?"
+      → INSIEME → RAGGRUPPA
+      → SEQUENZA SEPARATA → Subtask SEPARATI
+   
+   3. "Ha senso che appaiano come eventi separati nel calendario?"
+      → NO (es: micro-task di una sessione) → RAGGRUPPA
+      → SÌ (es: fasi/milestone di un progetto) → Subtask SEPARATI
+   
+   4. "Richiedono spostamenti fisici o cambi di contesto tra loro?"
+      → NO (stessa location/contesto) → RAGGRUPPA
+      → SÌ (location/contesto diversi) → Subtask SEPARATI
+   
+   ⚠️⚠️⚠️ ESEMPIO APPLICABILE A QUALSIASI CONTESTO:
+   
+   Input generico: "N sessioni a settimana" + File con tabella/elenco dettagliato
+   
+   Struttura nel file:
+   | Sessione 1 | Elemento A, Elemento B, Elemento C |
+   | Sessione 2 | Elemento D, Elemento E, Elemento F |
+   | Sessione 3 | Elemento G, Elemento H, Elemento I |
+   
+   ❌ SBAGLIATO (troppo granulare):
+   - 9 subtask (uno per ogni elemento singolo)
+   
+   ✅ CORRETTO (livello giusto):
+   - Subtask 1: "Sessione 1: [Nome/Tipo]"
+     Description: "Elemento A, Elemento B, Elemento C"
+     Duration: X minuti
+   - Subtask 2: "Sessione 2: [Nome/Tipo]"
+     Description: "Elemento D, Elemento E, Elemento F"
+     Duration: X minuti
+   - Subtask 3: "Sessione 3: [Nome/Tipo]"
+     Description: "Elemento G, Elemento H, Elemento I"
+     Duration: X minuti
+   
+   APPLICAZIONI CONCRETE:
+   - Allenamento: "Allenamento Lower Body" (Description: Squat, Affondi, Leg press)
+   - Studio: "Sessione Studio Matematica" (Description: Capitolo 3, esercizi 1-10, ripasso)
+   - Lavoro: "Sprint Planning Meeting" (Description: Review backlog, stima story points, assegnazione task)
+   - Creatività: "Sessione Design Logo" (Description: Sketch iniziali, palette colori, 3 varianti)
+   - Cucina: "Preparazione Pasti Settimana" (Description: Pasta al forno, polpette, insalata)
+
+2. DOPO AVER IDENTIFICATO IL GIUSTO LIVELLO, ANALIZZA LA FREQUENZA
+   
    - Leggi attentamente titolo, descrizione e contenuto del file allegato (se presente)
-   - Identifica le attività necessarie per raggiungere l'obiettivo
    - ⚠️⚠️⚠️ REGOLA CRUCIALE - FREQUENZA ESPLICITA:
      
      SE l'utente scrive numeri specifici come:
@@ -679,50 +846,89 @@ ${eventsAnalysis}
    
    DEFAULT: 1 evento principale per giorno, distribuito secondo la frequenza ESATTA richiesta
 
-3. RAGGRUPPA INTELLIGENTEMENTE - REGOLA FONDAMENTALE
+4. RAGGRUPPA INTELLIGENTEMENTE - REGOLA FONDAMENTALE
    
-   ⚠️⚠️⚠️ DISTINGUI TRA EVENTI SINGOLI E RICORRENTI:
+   ⚠️⚠️⚠️ QUANDO USARE EVENTI RICORRENTI VS EVENTI SINGOLI:
    
-   CASO A - ATTIVITÀ CHE SI RIPETE (USA 1 EVENTO RICORRENTE):
-   - Se l'utente dice "1 evento a settimana" → Crea 1 SOLO subtask con recurrence
-   - Se l'utente dice "2 volte a settimana" → Crea 1 SOLO subtask con recurrence (byDay: 2 giorni)
-   - Se l'utente dice "quotidiano" → Crea 1 SOLO subtask con recurrence DAILY
+   🔄 CASO A - USA EVENTO RICORRENTE (con recurrence):
+   Quando la STESSA attività si ripete più volte:
    
-   ESEMPIO CORRETTO - "1 evento a settimana per 4 settimane":
-   ✅ JSON OUTPUT:
+   Esempi:
+   - "Allenamento gambe 2 volte a settimana" → 1 SOLO subtask ricorrente
+   - "Lezione di inglese ogni martedì" → 1 SOLO subtask ricorrente  
+   - "Daily standup meeting" → 1 SOLO subtask ricorrente
+   - "Corso di yoga 3 volte a settimana" → 1 SOLO subtask ricorrente
+   
+   ✅ CORRETTO (Allenamento - stessa attività ripetuta):
    {
      "subtasks": [
        {
-         "title": "Sessione Studio Deep Learning",
-         "estimatedDuration": 60,
-         "suggestedStart": "2025-11-05T15:00:00.000Z",
-         "suggestedEnd": "2025-11-05T16:00:00.000Z",
+         "title": "Allenamento Upper Body",
+         "description": "Panca, shoulder press, tricipiti",
+         "suggestedStart": "2025-11-05T09:00:00.000Z",
+         "suggestedEnd": "2025-11-05T10:30:00.000Z",
          "recurrence": {
            "frequency": "WEEKLY",
-           "byDay": ["TU"],  // ← UN SOLO GIORNO perché è 1/settimana
-           "until": "2025-11-30T23:59:59.000Z"
+           "byDay": ["TU", "FR"],  // ← 2 volte a settimana
+           "until": "2025-12-31T23:59:59.000Z"
          }
        }
      ]
    }
-   → Questo creerà 4 eventi (1 per settimana) automaticamente!
    
-   ESEMPIO SBAGLIATO - "1 evento a settimana":
-   ❌ JSON OUTPUT:
+   📅 CASO B - USA EVENTI SEPARATI (NO recurrence):
+   Quando sono attività DIVERSE in sequenza, anche se distanziate 1 settimana l'una dall'altra:
+   
+   Esempi:
+   - "Progetto con 5 fasi diverse, 1 fase a settimana" → 5 subtask SEPARATI
+   - "Corso con 4 moduli, 1 modulo a settimana" → 4 subtask SEPARATI
+   - "Piano di studio con capitoli diversi" → N subtask SEPARATI
+   - "Sviluppo software: Design, Implementazione, Testing, Deploy" → 4 subtask SEPARATI
+   
+   ✅ CORRETTO (Progetto con fasi diverse):
    {
      "subtasks": [
-       { "title": "Studio 1", "suggestedStart": "2025-11-05T15:00:00.000Z", ... },
-       { "title": "Studio 2", "suggestedStart": "2025-11-12T15:00:00.000Z", ... },
-       { "title": "Studio 3", "suggestedStart": "2025-11-19T15:00:00.000Z", ... }
+       {
+         "title": "Fase 1: Analisi Requisiti",
+         "description": "Studio del problema e raccolta dati",
+         "suggestedStart": "2025-11-05T15:00:00.000Z",
+         "suggestedEnd": "2025-11-05T16:00:00.000Z"
+         // ← NO recurrence perché è una fase UNICA
+       },
+       {
+         "title": "Fase 2: Implementazione MLP",
+         "description": "Coding e training del modello",
+         "suggestedStart": "2025-11-12T15:00:00.000Z",
+         "suggestedEnd": "2025-11-12T16:00:00.000Z"
+         // ← NO recurrence perché è una fase DIVERSA
+       },
+       {
+         "title": "Fase 3: Testing e Validazione",
+         "description": "Valutazione performance",
+         "suggestedStart": "2025-11-19T15:00:00.000Z",
+         "suggestedEnd": "2025-11-19T16:00:00.000Z"
+         // ← NO recurrence
+       }
      ]
    }
-   → Questo crea 3 subtask SEPARATI invece di 1 ricorrente!
    
-   CASO B - ATTIVITÀ DIVERSE (USA PIÙ EVENTI SEPARATI):
-   - Solo se sono attività DIVERSE (es: Fase 1, Fase 2, Fase 3)
-   - Solo se NON si ripetono con pattern regolare
+   ⚠️ INDICATORI CHIAVE PER EVENTI SEPARATI:
+   - Presenza di parole come: "fasi", "step", "moduli", "capitoli", "milestone"
+   - Attività con titoli/descrizioni DIVERSE
+   - Progressione logica (Fase 1 → Fase 2 → Fase 3)
+   - Documento allegato con sezioni/capitoli distinti
+   - L'ultima attività è diversa (es: "revisione finale", "consegna", "presentazione")
    
-   ESEMPIO CORRETTO - Progetto con fasi diverse:
+   ⚠️ INDICATORI CHIAVE PER EVENTI RICORRENTI:
+   - La STESSA attività ripetuta (es: "allenamento", "lezione", "riunione")
+   - Frequenza esplicita senza fasi ("2 volte a settimana", "ogni martedì")
+   - Nessuna progressione logica tra le occorrenze
+   - Attività indipendenti l'una dall'altra
+   
+   🎯 REGOLA D'ORO:
+   - Se ogni evento ha un TITOLO DIVERSO o un OBIETTIVO DIVERSO → Eventi SEPARATI (NO recurrence)
+   - Se ogni evento fa la STESSA COSA più volte → Evento RICORRENTE (con recurrence)
+   - In caso di dubbio → Preferisci eventi SEPARATI per maggiore flessibilità
    ✅ JSON OUTPUT:
    {
      "subtasks": [
@@ -734,12 +940,13 @@ ${eventsAnalysis}
    → OK perché sono attività DIVERSE
    
    ⚠️ REGOLA D'ORO:
-   - Se l'utente dice "X volte a settimana" → 1 SOLO subtask con recurrence
-   - Se l'utente descrive fasi diverse → N subtask separati (senza recurrence)
+   - Se ogni evento ha un TITOLO DIVERSO o un OBIETTIVO DIVERSO → Eventi SEPARATI (NO recurrence)
+   - Se ogni evento fa la STESSA COSA più volte → Evento RICORRENTE (con recurrence)
+   - In caso di dubbio → Preferisci eventi SEPARATI per maggiore flessibilità
    - Durata ideale per evento: 60-180 minuti (sessioni produttive)
-   - Raggruppa attività correlate in macro-blocchi
+   - Raggruppa micro-task della stessa sessione in 1 subtask con description dettagliata
 
-4. SCHEDULAZIONE SENZA SOVRAPPOSIZIONI (ALGORITMO RIGIDO)
+5. SCHEDULAZIONE SENZA SOVRAPPOSIZIONI (ALGORITMO RIGIDO)
    
    Per OGNI subtask che crei:
    
@@ -767,7 +974,7 @@ ${eventsAnalysis}
    - ⚠️ RISPETTA LA FREQUENZA: Se l'utente vuole 4/settimana, distribuisci su 4 giorni diversi (NON 7!)
    - ⚠️ NON sovrapporre più eventi nello stesso giorno se non necessario
 
-5. FORMATO SUBTASK (JSON)
+6. FORMATO SUBTASK (JSON)
    
    Ogni subtask DEVE avere:
    - title: stringa breve (max 60 caratteri)

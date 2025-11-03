@@ -6,6 +6,7 @@ export interface CreateGoalDto {
   description?: string;
   deadline: Date;
   priority?: 'low' | 'medium' | 'high';
+  allowRecurrence?: boolean; // Allow AI to create recurring events
 }
 
 export interface UpdateGoalDto {
@@ -14,6 +15,7 @@ export interface UpdateGoalDto {
   deadline?: Date;
   priority?: 'low' | 'medium' | 'high';
   status?: 'active' | 'completed' | 'cancelled';
+  allowRecurrence?: boolean;
 }
 
 @Injectable()
@@ -21,6 +23,7 @@ export class GoalsService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: string, data: CreateGoalDto) {
+    console.log(`🎯 Creating goal with allowRecurrence: ${data.allowRecurrence} (will be: ${data.allowRecurrence ?? true})`);
     return this.prisma.goal.create({
       data: {
         userId,
@@ -28,7 +31,8 @@ export class GoalsService {
         description: data.description,
         deadline: data.deadline,
         priority: data.priority || 'medium',
-      },
+        allowRecurrence: data.allowRecurrence ?? true, // Default: allow recurrence
+      } as any, // Cast needed until TypeScript reloads Prisma types
     });
   }
 
@@ -49,10 +53,11 @@ export class GoalsService {
         description: data.description, // Keep original user description clean
         deadline: data.deadline,
         priority: data.priority || 'medium',
+        allowRecurrence: data.allowRecurrence ?? true, // Default: allow recurrence
         attachedFileName: fileData.fileName,
         attachedFileType: fileData.fileType,
         extractedContent: fileData.extractedContent, // Store separately for AI use only
-      },
+      } as any, // Cast needed until TypeScript reloads Prisma types
     });
   }
 
