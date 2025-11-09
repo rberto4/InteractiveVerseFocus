@@ -175,7 +175,6 @@ interface GoalPlanningService {
 | **ESLint** | Linting |
 | **Prettier** | Code Formatting |
 | **GitHub Actions** | CI/CD |
-| **Docker** | Containerization |
 | **Sentry** | Error Tracking |
 
 ---
@@ -260,7 +259,63 @@ interactiverse_focus_extension/
 
 - **Node.js** >= 20.x
 - **pnpm** >= 8.x (or npm/yarn)
-- **PostgreSQL** >= 16.x (or Docker)
+- **PostgreSQL** >= 16.x
+- **Google Cloud Platform** account (for Calendar API)
+- **OpenRouter API** key
+
+### Installation
+
+1. **Clone the repository**
+
+```bash
+git clone https://github.com/rberto4/InteractiveVerseFocus.git
+cd InteractiveVerseFocus
+```
+
+2. **Install dependencies**
+
+```bash
+pnpm install
+```
+
+3. **Setup environment variables**
+
+Create `.env` files in both `packages/backend` and `packages/extension`:
+
+**Backend `.env`:**
+```env
+# Database Configuration (varies by OS)
+# 🍎 macOS (Homebrew PostgreSQL - no password)
+DATABASE_URL="postgresql://YOUR_MAC_USERNAME@localhost:5432/interactiverse"
+# Replace YOUR_MAC_USERNAME with output of: whoami
+
+# 🐧 Linux / 🪟 Windows (requires password)
+# DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/interactiverse"
+
+# ⚠️ Get these from maintainer or secure source
+GOOGLE_CLIENT_ID="your-google-oauth-client-id"
+GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
+GOOGLE_REDIRECT_URI="http://localhost:3000/auth/google/callback"
+EXTENSION_ID="your-extension-id"
+OPENROUTER_API_KEY="your-openrouter-api-key"
+JWT_SECRET="your-jwt-secret"
+PORT=3000
+```
+
+**Extension `.env`:**
+```env
+VITE_API_URL="http://localhost:3000"
+```
+
+4. **Setup PostgreSQL Database**
+
+### 🛠 Manual Setup
+
+#### Prerequisites
+
+- **Node.js** >= 20.x
+- **pnpm** >= 8.x (or npm/yarn)
+- **PostgreSQL** >= 16.x
 - **Google Cloud Platform** account (for Calendar API)
 - **OpenRouter API** key
 
@@ -293,9 +348,7 @@ DATABASE_URL="postgresql://YOUR_MAC_USERNAME@localhost:5432/interactiverse"
 # 🐧 Linux / 🪟 Windows (requires password)
 # DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/interactiverse"
 
-# 🐳 Docker (recommended for cross-platform)
-# DATABASE_URL="postgresql://postgres:postgres@localhost:5432/interactiverse"
-
+# ⚠️ Get these from maintainer or GitHub Secrets
 GOOGLE_CLIENT_ID="your-google-oauth-client-id"
 GOOGLE_CLIENT_SECRET="your-google-oauth-client-secret"
 GOOGLE_REDIRECT_URI="http://localhost:3000/auth/google/callback"
@@ -304,6 +357,9 @@ OPENROUTER_API_KEY="your-openrouter-api-key"
 JWT_SECRET="your-jwt-secret"
 PORT=3000
 ```
+
+**⚠️ Important for Manual Setup:**  
+If you're using manual setup, ask the maintainer to share the secrets via secure channel (1Password, encrypted file, etc.). **Never commit real secrets to git.**
 
 **Extension `.env`:**
 ```env
@@ -380,38 +436,6 @@ CREATE DATABASE interactiverse;
 ```
 </details>
 
-<details>
-<summary>🐳 <strong>Docker (Cross-platform - Recommended)</strong></summary>
-
-Create `docker-compose.yml` in project root:
-
-```yaml
-version: '3.8'
-services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: interactiverse_db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: interactiverse
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-volumes:
-  postgres_data:
-```
-
-```bash
-# Start database
-docker-compose up -d
-
-# DATABASE_URL: postgresql://postgres:postgres@localhost:5432/interactiverse
-```
-</details>
-
 5. **Run database migrations**
 
 ```bash
@@ -439,7 +463,24 @@ pnpm dev
 
 ---
 
-## 📅 Development Roadmap
+---
+
+## � Additional Documentation
+
+### Setup & Configuration Guides
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Setup guide for developers
+
+### Project Structure Files
+
+- **`package.json`** - Root workspace configuration (pnpm)
+- **`pnpm-workspace.yaml`** - Monorepo workspace definition
+- **`tsconfig.json`** - Base TypeScript configuration
+- **`turbo.json`** - Turborepo build orchestration
+
+---
+
+## �📅 Development Roadmap
 
 ### Phase 0: Planning & Setup ✅ (Current Phase)
 

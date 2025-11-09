@@ -8,7 +8,7 @@ Before you begin, ensure you have the following installed:
 
 - **Node.js** >= 20.x ([Download](https://nodejs.org/))
 - **pnpm** >= 8.x (Install: `npm install -g pnpm`)
-- **PostgreSQL** >= 16.x ([Download](https://www.postgresql.org/download/)) or use Docker
+- **PostgreSQL** >= 16.x ([Download](https://www.postgresql.org/download/))
 - **Git** ([Download](https://git-scm.com/))
 
 ## Step 1: Clone and Install

@@ -127,81 +127,79 @@ export class TaskPlanService {
       (goal.deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
     );
 
-    // Try generating plan with automatic overlap detection and retry
-    let taskPlan: TaskPlanResponse | undefined;
-    let attempts = 0;
-    const maxAttempts = 5; // Aumentato da 3 a 5 per dare più possibilità all'AI
-    let previousOverlaps: string[] = [];
 
-    while (attempts < maxAttempts) {
-      attempts++;
-      console.log(`🤖 AI generation attempt ${attempts}/${maxAttempts}`);
+    // qui
 
-      // Build AI prompt (include previous overlaps if any)
-      const prompt = this.buildPrompt(goal, existingEvents, totalDays, previousOverlaps);
+   // Try generating plan with automatic overlap detection and retry
+  let taskPlan: TaskPlanResponse | undefined;
+  let attempts = 0;
+  const maxAttempts = 5;
+  let previousOverlaps: string[] = [];
 
-      // Call AI API
-      const aiResponse = await this.callAI(prompt);
+  while (attempts < maxAttempts) {
+    attempts++;
+    console.log(`🤖 AI generation attempt ${attempts}/${maxAttempts}`);
 
-      // Parse AI response
-      const currentPlan = this.parseAIResponse(aiResponse);
+    // Build AI prompt (include previous overlaps if any)
+    const prompt = this.buildPrompt(goal, existingEvents, totalDays, previousOverlaps);
 
-      // Validate for overlaps
-      const overlaps = this.detectOverlaps(currentPlan.subtasks, existingEvents);
-      
-      // ⚠️ NEW: Validate for duplicate tasks on same day (same goal, same day)
-      const duplicates = this.detectDuplicateTasks(currentPlan.subtasks);
-      
-      // ⚠️ NEW: Validate for invalid recurring events ONLY if user disabled allowRecurrence
-      console.log(`🔍 Goal allowRecurrence value: ${(goal as any).allowRecurrence} (type: ${typeof (goal as any).allowRecurrence})`);
-      const invalidRecurrence = (goal as any).allowRecurrence === false 
-        ? this.detectInvalidRecurrence(currentPlan.subtasks)
-        : [];
-      console.log(`🔍 invalidRecurrence array length: ${invalidRecurrence.length}`);
+    // Call AI API
+    const aiResponse = await this.callAI(prompt);
 
-      if (overlaps.length === 0 && duplicates.length === 0 && invalidRecurrence.length === 0) {
-        console.log('✅ No overlaps, duplicates, or invalid recurrence detected, plan is valid!');
-        taskPlan = currentPlan;
-        break;
-      }
+    // Parse AI response
+    const currentPlan = this.parseAIResponse(aiResponse);
 
-      if (duplicates.length > 0) {
-        console.warn(`⚠️ Detected ${duplicates.length} duplicate tasks on same day:`);
-        duplicates.forEach(dup => console.warn(`  - ${dup}`));
-      }
-      
-      if (invalidRecurrence.length > 0) {
-        console.warn(`⚠️ Detected ${invalidRecurrence.length} invalid recurring events:`);
-        invalidRecurrence.forEach(err => console.warn(`  - ${err}`));
-      }
+    // Validate for overlaps
+    const overlaps = this.detectOverlaps(currentPlan.subtasks, existingEvents);
+    
+    // ⚠️ REMOVED: detectDuplicateTasks - AI now handles this intelligently
+    
+    // ⚠️ Validate for invalid recurring events ONLY if user disabled allowRecurrence
+    console.log(`🔍 Goal allowRecurrence value: ${(goal as any).allowRecurrence} (type: ${typeof (goal as any).allowRecurrence})`);
+    const invalidRecurrence = (goal as any).allowRecurrence === false 
+      ? this.detectInvalidRecurrence(currentPlan.subtasks)
+      : [];
+    console.log(`🔍 invalidRecurrence array length: ${invalidRecurrence.length}`);
 
-      if (overlaps.length > 0) {
-        console.warn(`⚠️ Detected ${overlaps.length} overlaps on attempt ${attempts}:`);
-        overlaps.forEach(overlap => console.warn(`  - ${overlap}`));
-      }
-
-      // Store overlaps AND duplicates AND invalid recurrence for next attempt
-      previousOverlaps = [...overlaps, ...duplicates, ...invalidRecurrence];
-
-      if (attempts === maxAttempts) {
-        // Add overlaps to conflicts section with helpful suggestions
-        currentPlan.conflicts = [
-          ...(currentPlan.conflicts || []),
-          ...overlaps.map(o => `SOVRAPPOSIZIONE: ${o}`),
-        ];
-        
-        // Add recommendations on how to fix conflicts
-        currentPlan.recommendations = [
-          ...(currentPlan.recommendations || []),
-          '🔄 SUGGERIMENTO: Puoi rigenerare il piano - il sistema proverà automaticamente a evitare le sovrapposizioni',
-          '✏️ ALTERNATIVA: Modifica manualmente gli orari dei task in conflitto',
-          '📅 NOTA: Gli eventi esistenti nel calendario hanno priorità e non possono essere spostati',
-        ];
-        
-        console.error('❌ Max attempts reached, returning plan with overlap warnings');
-        taskPlan = currentPlan;
-      }
+    // ✅ UPDATED: Only check overlaps and invalid recurrence
+    if (overlaps.length === 0 && invalidRecurrence.length === 0) {
+      console.log('✅ No overlaps or invalid recurrence detected, plan is valid!');
+      taskPlan = currentPlan;
+      break;
     }
+    
+    if (invalidRecurrence.length > 0) {
+      console.warn(`⚠️ Detected ${invalidRecurrence.length} invalid recurring events:`);
+      invalidRecurrence.forEach(err => console.warn(`  - ${err}`));
+    }
+
+    if (overlaps.length > 0) {
+      console.warn(`⚠️ Detected ${overlaps.length} overlaps on attempt ${attempts}:`);
+      overlaps.forEach(overlap => console.warn(`  - ${overlap}`));
+    }
+
+    // ✅ UPDATED: Store only overlaps and invalid recurrence for next attempt
+    previousOverlaps = [...overlaps, ...invalidRecurrence];
+
+    if (attempts === maxAttempts) {
+      // Add overlaps to conflicts section with helpful suggestions
+      currentPlan.conflicts = [
+        ...(currentPlan.conflicts || []),
+        ...overlaps.map(o => `SOVRAPPOSIZIONE: ${o}`),
+      ];
+      
+      // Add recommendations on how to fix conflicts
+      currentPlan.recommendations = [
+        ...(currentPlan.recommendations || []),
+        '🔄 SUGGERIMENTO: Puoi rigenerare il piano - il sistema proverà automaticamente a evitare le sovrapposizioni',
+        '✏️ ALTERNATIVA: Modifica manualmente gli orari dei task in conflitto',
+        '📅 NOTA: Gli eventi esistenti nel calendario hanno priorità e non possono essere spostati',
+      ];
+      
+      console.error('❌ Max attempts reached, returning plan with overlap warnings');
+      taskPlan = currentPlan;
+    }
+  }
 
     if (!taskPlan) {
       throw new Error('Failed to generate task plan');
@@ -305,50 +303,6 @@ export class TaskPlanService {
     }
 
     return overlaps;
-  }
-
-  /**
-   * Detect if multiple subtasks are scheduled on the same day
-   * This is usually undesired (unless explicitly requested by user)
-   */
-  private detectDuplicateTasks(subtasks: Subtask[]): string[] {
-    const duplicates: string[] = [];
-    const tasksByDay = new Map<string, Subtask[]>();
-
-    // Group tasks by day
-    for (const task of subtasks) {
-      if (!task.suggestedStart) continue;
-
-      const startDate = new Date(task.suggestedStart);
-      const dayKey = `${startDate.getFullYear()}-${startDate.getMonth() + 1}-${startDate.getDate()}`;
-
-      if (!tasksByDay.has(dayKey)) {
-        tasksByDay.set(dayKey, []);
-      }
-      tasksByDay.get(dayKey)!.push(task);
-    }
-
-    // Check for duplicates (more than 1 task on same day)
-    for (const [, tasks] of tasksByDay.entries()) {
-      if (tasks.length > 1) {
-        const firstTask = tasks[0];
-        if (!firstTask || !firstTask.suggestedStart) continue;
-        
-        const date = new Date(firstTask.suggestedStart);
-        const dateStr = date.toLocaleDateString('it-IT', { 
-          weekday: 'long', 
-          day: 'numeric', 
-          month: 'long' 
-        });
-        
-        const taskTitles = tasks.map(t => `"${t.title}"`).join(', ');
-        duplicates.push(
-          `⚠️ Più task nello stesso giorno (${dateStr}): ${taskTitles}. L'utente ha chiesto "1 evento per giornata" - usa eventi RICORRENTI invece di eventi separati!`
-        );
-      }
-    }
-
-    return duplicates;
   }
 
   /**
@@ -528,613 +482,173 @@ export class TaskPlanService {
     
     return { valid: true };
   }
+private buildPrompt(
+  goal: any,
+  existingEvents: any[],
+  totalDays: number,
+  previousOverlaps: string[] = [],
+): string {
+  const now = new Date();
+  const deadline = new Date(goal.deadline);
+  
+  // Calculate available time
+  const workHoursPerDay = 8;
+  const totalWorkHours = totalDays * workHoursPerDay;
+  const occupiedHours = existingEvents.reduce((total, event) => {
+    return total + (new Date(event.end).getTime() - new Date(event.start).getTime()) / (1000 * 60 * 60);
+  }, 0);
+  const availableHours = totalWorkHours - occupiedHours;
+  
+  // Format occupied slots compactly
+  const occupiedSlots = existingEvents.map(e => ({
+    title: e.title,
+    start: new Date(e.start).toISOString(),
+    end: new Date(e.end).toISOString(),
+    duration: Math.round((new Date(e.end).getTime() - new Date(e.start).getTime()) / (1000 * 60))
+  }));
 
-  private buildPrompt(
-    goal: any,
-    existingEvents: any[],
-    totalDays: number,
-    previousOverlaps: string[] = [],
-  ): string {
-    const now = new Date();
-    const deadline = new Date(goal.deadline);
-    
-    // Calcola ore totali disponibili (considerando 8 ore lavorative al giorno)
-    const workHoursPerDay = 8;
-    const totalWorkHours = totalDays * workHoursPerDay;
-    
-    // Calcola ore già occupate da eventi
-    const occupiedHours = existingEvents.reduce((total, event) => {
-      const duration = (new Date(event.end).getTime() - new Date(event.start).getTime()) / (1000 * 60 * 60);
-      return total + duration;
-    }, 0);
-    
-    const availableHours = totalWorkHours - occupiedHours;
-    
-    // Crea mappa temporale precisa degli slot occupati
-    const occupiedSlots = existingEvents.map((e) => {
-      const start = new Date(e.start);
-      const end = new Date(e.end);
-      const duration = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
-      
-      return `EVENTO BLOCCATO: "${e.title}"
-   INIZIO: ${start.toISOString()}
-   FINE: ${end.toISOString()}
-   DURATA: ${duration} minuti
-   GIORNO: ${start.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
-   ORARIO: ${start.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
-    }).join('\n\n');
+  // File context
+  const fileContext = goal.extractedContent 
+    ? `ATTACHED_FILE: "${goal.attachedFileName}"\nCONTENT: ${goal.extractedContent.substring(0, 1000)}...\nUSE this content to create specific, relevant subtasks.`
+    : '';
 
-    const eventsAnalysis = existingEvents.length > 0
-      ? `EVENTI CALENDARIO CHE OCCUPANO TEMPO (DA EVITARE ASSOLUTAMENTE):\n\n${occupiedSlots}`
-      : 'CALENDARIO LIBERO: Nessun evento esistente';
+  // Retry feedback
+  const retryContext = previousOverlaps.length > 0 
+    ? `PREVIOUS_ERRORS:\n${previousOverlaps.map((o, i) => `${i + 1}. ${o}`).join('\n')}\nFIX: Reschedule conflicting tasks to completely different time slots.\n`
+    : '';
 
-    // Preparazione informazioni contestuali dal file allegato
-    const fileContext = goal.extractedContent 
-      ? `\n\n📎 CONTENUTO FILE ALLEGATO "${goal.attachedFileName}":\n${goal.extractedContent}\n\nUSA QUESTE INFORMAZIONI per creare task specifici e pertinenti al contenuto del documento.`
-      : '';
+  // Recurrence policy
+  const recurrencePolicy = (goal as any).allowRecurrence === false
+    ? 'RECURRENCE_DISABLED: User explicitly disabled recurring events. Create separate single events even for repeated activities.'
+    : 'RECURRENCE_ENABLED: Use recurrence for same repeated activities.';
 
-    // Feedback da tentativi precedenti
-    const retryFeedback = previousOverlaps.length > 0 
-      ? `\n\n🚨🚨🚨 ATTENZIONE - ERRORI RILEVATI NEL TENTATIVO PRECEDENTE:\n\nHai generato task che si SOVRAPPONGONO con eventi esistenti:\n\n${previousOverlaps.map(o => `❌ ${o}`).join('\n')}\n\n⚠️ DEVI CORREGGERE QUESTI ERRORI:\n- Sposta i task in conflitto in orari COMPLETAMENTE DIVERSI\n- Assicurati che NON ci sia sovrapposizione con gli eventi elencati sopra\n- Considera di spostare i task al pomeriggio, sera, o su altri giorni\n- Se necessario, riduci la durata o dividi il task in sessioni più piccole\n`
-      : '';
+  return `You are an expert AI scheduler. Generate a conflict-free task plan in JSON format.
 
-    // Policy on recurring events based on user preference
-    const recurrencePolicy = (goal as any).allowRecurrence === false
-      ? `\n\n🚫 POLITICA EVENTI RICORRENTI:\n⚠️⚠️⚠️ L'UTENTE HA DISABILITATO GLI EVENTI RICORRENTI.\nNON creare NESSUN subtask con recurrence.\nOGNI attività deve essere un evento SINGOLO separato, anche se si ripete settimanalmente.\nSe l'utente dice "1 volta a settimana per 4 settimane", crea 4 subtask SEPARATI senza recurrence.\n`
-      : `\n\n🔄 POLITICA EVENTI RICORRENTI:\nL'utente CONSENTE eventi ricorrenti. Segui le regole descritte nella sezione "RAGGRUPPA INTELLIGENTEMENTE".\n`;
+CONTEXT:
+${JSON.stringify({
+  goal: {
+    title: goal.title,
+    description: goal.description || 'N/A',
+    priority: goal.priority,
+    deadline: deadline.toISOString()
+  },
+  timeWindow: {
+    start: now.toISOString(),
+    end: deadline.toISOString(),
+    daysAvailable: totalDays,
+    hoursAvailable: Math.round(availableHours),
+    minutesAvailable: Math.round(availableHours * 60)
+  },
+  occupiedSlots: occupiedSlots.length > 0 ? occupiedSlots : "CALENDAR_FREE",
+  userLocation: "Monza, IT (UTC+1)"
+}, null, 0)}
 
-    return `Sei un AI planner esperto. Il tuo unico compito è suddividere l'obiettivo in subtask schedulati SENZA sovrapposizioni.${retryFeedback}${recurrencePolicy}
+${fileContext}
+${retryContext}
 
-═══════════════════════════════════════════════════════════════════
-📋 OBIETTIVO
-═══════════════════════════════════════════════════════════════════
-Titolo: "${goal.title}"
-Descrizione: ${goal.description || 'Nessuna descrizione fornita'}${fileContext}
-Scadenza: ${deadline.toISOString()}
-Priorità: ${goal.priority}
+MANDATORY_RULES:
+1. USER_SETTINGS (IMPERATIVE - MUST FOLLOW):
+   - ${recurrencePolicy}
+   - Output language: ITALIAN only (all titles/descriptions in Italian)
+   - Frequency precision: If user says "N times/week", use EXACTLY N days in byDay array
 
-═══════════════════════════════════════════════════════════════════
-⏰ FINESTRA TEMPORALE
-═══════════════════════════════════════════════════════════════════
-INIZIO: ${now.toISOString()}
-FINE: ${deadline.toISOString()}
-Giorni disponibili: ${totalDays}
-Ore lavorative totali: ${totalWorkHours}h
-Ore già occupate: ${Math.round(occupiedHours)}h
-Ore disponibili: ${Math.round(availableHours)}h (${Math.round(availableHours * 60)} minuti)
+2. SCHEDULING_CONSTRAINTS:
+   - NO overlaps with occupied slots (15min buffer required)
+   - Valid hours: 06:00-23:00 (prefer 08:00-22:00)
+   - FORBIDDEN: 00:00-06:00 (night), starting after 23:00
+   - Minimum duration: 15min, Maximum: 12 hours
+   - Realistic timing: consider travel time, breaks, physical limits
 
-═══════════════════════════════════════════════════════════════════
-🚫 SLOT TEMPORALI OCCUPATI (NON USARE MAI)
-═══════════════════════════════════════════════════════════════════
-${eventsAnalysis}
-
-═══════════════════════════════════════════════════════════════════
-⚠️ VINCOLI ASSOLUTI - ORARI NON DISPONIBILI
-═══════════════════════════════════════════════════════════════════
-
-⛔ REGOLA CRITICA: NON puoi schedulare NULLA durante gli slot occupati sopra!
-
-🕐 ORARI REALISTICI E SOSTENIBILI:
-
-1. ORARI VIETATI (NON schedulare MAI in questi orari):
-   - 🌙 Notte: 00:00-06:00 (riposo notturno)
-   - 🌙 Tarda notte: 23:00-23:59 (troppo tardi per iniziare attività)
+3. TASK_GRANULARITY (CRITICAL):
+   MERGE when: Activities happen in SAME session (e.g., workout exercises → 1 subtask)
+   SEPARATE when: Different phases/milestones OR different days (e.g., project phases → N subtasks)
    
-2. ORARI SCONSIGLIATI (usa SOLO se strettamente necessario):
-   - 🌅 Mattina presto: 06:00-07:00 (difficile svegliarsi)
-   - 🌆 Sera tardi: 22:00-23:00 (meglio evitare)
+   Pattern detection:
+   - Keywords "fase/step/modulo/capitolo" → SEPARATE events
+   - "N times/week" + same activity → 1 RECURRING event
+   - "N phases" + different activities → N SEPARATE events
 
-3. ORARI IDEALI (preferisci questi):
-   - ☀️ Mattina: 08:00-12:00 (se disponibile)
-   - 🌤️ Pomeriggio: 14:00-18:00 (se disponibile)
-   - 🌆 Sera: 18:00-22:00 (se disponibile)
-   - 🏖️ Weekend: 09:00-20:00 (più flessibilità)
+4. MULTIPLE_TASKS_PER_DAY (SMART LOGIC):
+   ⚠️ ONLY schedule multiple tasks on same day when:
+   
+   ALLOWED (natural/requested):
+   ✅ User explicitly requests: "morning workout + afternoon study"
+   ✅ Natural daily structure: "work session + meeting + review" 
+   ✅ Complementary activities: "gym + meal prep"
+   ✅ Full-day project breakdown: "coding morning + testing afternoon"
+   ✅ Multi-part routine: "warm-up + workout + stretching" (but merge these into 1 task!)
+   
+   FORBIDDEN (unnatural):
+   ❌ Repeating same activity: "Workout 1" + "Workout 2" same day → NO, use 2 different days
+   ❌ Arbitrary splitting: "Study session 1" + "Study session 2" → NO, make 1 longer session
+   ❌ Forced filling: Don't add extra tasks just because time is available
+   
+   DEFAULT BEHAVIOR: ONE main task per day unless context clearly indicates otherwise.
+   
+   Decision criteria:
+   - Read goal.description for explicit day structure requests
+   - Check goal.title for keywords: "giornata", "mattina+pomeriggio", "multi-task"
+   - Analyze attached file for daily schedules or routines
+   - If uncertain → distribute across different days
 
-4. BUFFER TRA EVENTI (FONDAMENTALE):
-   - ⚠️ Minimo 15 minuti tra eventi (per spostamenti/pause)
-   - ⚠️ Se evento precedente finisce alle 18:00, il prossimo inizia DOPO le 18:15
-   - ⚠️ NON schedulare eventi "back-to-back" senza pausa
-   - ⚠️ Se serve spostarsi fisicamente (es: palestra dopo lavoro), lascia 30-60 minuti
+5. RECURRENCE_LOGIC:
+   USE recurrence when: SAME activity repeats (e.g., "Weekly workout")
+   NO recurrence when: DIFFERENT activities in sequence (e.g., "Phase 1, Phase 2, Phase 3")
+   
+   Frequency mapping (EXACT):
+   - "1/week" → byDay: ["WE"] (1 day)
+   - "2/week" → byDay: ["MO","TH"] (2 days)
+   - "3/week" → byDay: ["MO","WE","FR"] (3 days)
+   - "daily" → frequency: "DAILY"
 
-5. CONFLITTI CON EVENTI ESISTENTI:
-   - 🚫 Se vedi "Lavoro 09:00-18:00" → NON schedulare tra 09:00-18:00
-   - ✅ Puoi schedulare DOPO (es: 18:30-20:00 per un allenamento)
-   - 🚫 Se vedi "Cena 20:00-21:00" → NON schedulare in quell'orario
-   - ✅ Puoi schedulare PRIMA (es: 18:00-19:30) o DOPO (es: 21:30-23:00)
-
-⚠️ ESEMPI PRATICI:
-
-✅ CORRETTO:
-- Evento esistente: "Lavoro 09:00-18:00 Lun-Ven"
-- Nuovo evento: "Palestra 18:30-20:00 Lun" (dopo lavoro + 30min buffer)
-
-✅ CORRETTO:
-- Evento esistente: "Riunione 10:00-11:00 Mar"
-- Nuovo evento: "Studio 11:30-13:00 Mar" (dopo riunione + 30min buffer)
-
-❌ SBAGLIATO:
-- Evento esistente: "Lavoro 09:00-18:00 Lun-Ven"
-- Nuovo evento: "Studio 10:00-12:00 Lun" (CONFLITTO CON LAVORO!)
-
-❌ SBAGLIATO:
-- Evento esistente: "Cena 20:00-21:00"
-- Nuovo evento: "Corso 20:30-22:00" (CONFLITTO CON CENA!)
-
-❌ SBAGLIATO:
-- Evento esistente: "Riunione 15:00-16:00"
-- Nuovo evento: "Palestra 16:00-17:00" (NO BUFFER! Serve almeno 16:15)
-
-❌ SBAGLIATO:
-- Nuovo evento: "Studio 02:00-04:00" (ORARIO NOTTURNO VIETATO!)
-
-⚠️ SE NON TROVI SLOT LIBERI:
-- Usa le sere (18:30-22:00) rispettando i buffer
-- Usa i weekend (09:00-20:00)
-- Riduci la durata degli eventi
-- Distribuisci su più giorni
-- ⚠️ NON schedulare mai in orari occupati o notturni!
-
-═══════════════════════════════════════════════════════════════════
-📝 ISTRUZIONI OBBLIGATORIE
-═══════════════════════════════════════════════════════════════════
-
-1. ANALIZZA L'OBIETTIVO E IDENTIFICA IL LIVELLO DI GRANULARITÀ
-   
-   ⚠️⚠️⚠️ REGOLA FONDAMENTALE - RAGGRUPPAMENTO INTELLIGENTE:
-   
-   Prima di creare i subtask, chiediti: "Qual è l'UNITÀ ATOMICA di lavoro che l'utente vuole schedulare?"
-   
-   🎯 PRINCIPIO CHIAVE: Un subtask = Una SESSIONE DI LAVORO completa e autonoma
-   
-   ✅ QUANDO RAGGRUPPARE (crea 1 subtask che contiene più elementi):
-   
-   CASO 1 - SESSIONE CON ATTIVITÀ MULTIPLE:
-   ❌ SBAGLIATO:
-   - Subtask 1: "Esercizio A"
-   - Subtask 2: "Esercizio B"
-   - Subtask 3: "Esercizio C"
-   → Problema: L'utente fa tutto nella STESSA sessione!
-   
-   ✅ CORRETTO:
-   - Subtask 1: "Sessione Completa"
-     Description: "Esercizio A, Esercizio B, Esercizio C"
-   → L'utente fa TUTTI questi elementi in UNA SOLA sessione
-   
-   ESEMPI CONCRETI:
-   - Allenamento: NON creare un subtask per ogni esercizio → Crea "Allenamento Lower Body" con tutti gli esercizi nella description
-   - Studio: NON creare un subtask per ogni paragrafo → Crea "Sessione Studio Capitolo 3" con tutti i contenuti nella description
-   - Coding: NON creare un subtask per ogni funzione → Crea "Implementazione Feature X" con tutte le funzioni nella description
-   - Riunione: NON creare un subtask per ogni punto → Crea "Meeting Team" con tutti i punti all'ordine del giorno nella description
-   
-   CASO 2 - ATTIVITÀ CON MICRO-TASK:
-   ❌ SBAGLIATO:
-   - Subtask 1: "Preparare slide 1"
-   - Subtask 2: "Preparare slide 2"
-   - Subtask 3: "Preparare slide 3"
-   → Problema: Si fanno tutte insieme nella stessa sessione!
-   
-   ✅ CORRETTO:
-   - Subtask 1: "Preparazione Presentazione"
-     Description: "Creare slide 1-3, aggiungere grafici, revisione contenuti"
-   → Raggruppa micro-attività che si fanno insieme
-   
-   🚫 QUANDO NON RAGGRUPPARE (crea subtask separati):
-   
-   CASO A - FASI/STEP SEQUENZIALI DIVERSI:
-   ✅ CORRETTO:
-   - Subtask 1: "Fase 1: Ricerca" (settimana 1)
-   - Subtask 2: "Fase 2: Sviluppo" (settimana 2)
-   - Subtask 3: "Fase 3: Validazione" (settimana 3)
-   → Sono FASI DIVERSE che avvengono in momenti DIVERSI
-   
-   CASO B - SESSIONI IN GIORNI/MOMENTI DIVERSI:
-   ✅ CORRETTO:
-   - Subtask 1: "Sessione Tipo A" (Lunedì)
-   - Subtask 2: "Sessione Tipo B" (Mercoledì)
-   - Subtask 3: "Sessione Tipo C" (Venerdì)
-   → Sono SESSIONI DIVERSE in MOMENTI DIVERSI
-   
-   ESEMPI CONCRETI:
-   - Progetto software: "Design", "Implementazione", "Testing", "Deploy" → 4 subtask separati
-   - Corso online: "Modulo 1", "Modulo 2", "Modulo 3" → 3 subtask separati
-   - Preparazione esame: "Studio teoria", "Esercizi pratici", "Simulazione" → 3 subtask separati
-   - Scheda allenamento: "Allenamento Upper", "Allenamento Lower", "Allenamento Full" → 3 subtask separati
-   
-   🎓 DOMANDE DA PORSI:
-   1. "L'utente fa queste cose nella STESSA sessione/blocco di tempo?"
-      → SÌ → RAGGRUPPA in 1 subtask
-      → NO → Crea subtask SEPARATI
-   
-   2. "Sono elementi che si completano INSIEME o in sequenza TEMPORALE separata?"
-      → INSIEME → RAGGRUPPA
-      → SEQUENZA SEPARATA → Subtask SEPARATI
-   
-   3. "Ha senso che appaiano come eventi separati nel calendario?"
-      → NO (es: micro-task di una sessione) → RAGGRUPPA
-      → SÌ (es: fasi/milestone di un progetto) → Subtask SEPARATI
-   
-   4. "Richiedono spostamenti fisici o cambi di contesto tra loro?"
-      → NO (stessa location/contesto) → RAGGRUPPA
-      → SÌ (location/contesto diversi) → Subtask SEPARATI
-   
-   ⚠️⚠️⚠️ ESEMPIO APPLICABILE A QUALSIASI CONTESTO:
-   
-   Input generico: "N sessioni a settimana" + File con tabella/elenco dettagliato
-   
-   Struttura nel file:
-   | Sessione 1 | Elemento A, Elemento B, Elemento C |
-   | Sessione 2 | Elemento D, Elemento E, Elemento F |
-   | Sessione 3 | Elemento G, Elemento H, Elemento I |
-   
-   ❌ SBAGLIATO (troppo granulare):
-   - 9 subtask (uno per ogni elemento singolo)
-   
-   ✅ CORRETTO (livello giusto):
-   - Subtask 1: "Sessione 1: [Nome/Tipo]"
-     Description: "Elemento A, Elemento B, Elemento C"
-     Duration: X minuti
-   - Subtask 2: "Sessione 2: [Nome/Tipo]"
-     Description: "Elemento D, Elemento E, Elemento F"
-     Duration: X minuti
-   - Subtask 3: "Sessione 3: [Nome/Tipo]"
-     Description: "Elemento G, Elemento H, Elemento I"
-     Duration: X minuti
-   
-   APPLICAZIONI CONCRETE:
-   - Allenamento: "Allenamento Lower Body" (Description: Squat, Affondi, Leg press)
-   - Studio: "Sessione Studio Matematica" (Description: Capitolo 3, esercizi 1-10, ripasso)
-   - Lavoro: "Sprint Planning Meeting" (Description: Review backlog, stima story points, assegnazione task)
-   - Creatività: "Sessione Design Logo" (Description: Sketch iniziali, palette colori, 3 varianti)
-   - Cucina: "Preparazione Pasti Settimana" (Description: Pasta al forno, polpette, insalata)
-
-2. DOPO AVER IDENTIFICATO IL GIUSTO LIVELLO, ANALIZZA LA FREQUENZA
-   
-   - Leggi attentamente titolo, descrizione e contenuto del file allegato (se presente)
-   - ⚠️⚠️⚠️ REGOLA CRUCIALE - FREQUENZA ESPLICITA:
+6. CONFLICT_DETECTION_ALGORITHM:
+   For each subtask:
+     taskStart = Date(suggestedStart).getTime()
+     taskEnd = Date(suggestedEnd).getTime()
+     buffer = 900000 // 15min in ms
      
-     SE l'utente scrive numeri specifici come:
-     - "1 evento a settimana" / "1 volta a settimana" / "1 allenamento/settimana" → Crea ESATTAMENTE 1 evento/settimana (NON 2, NON 3!)
-     - "2 eventi a settimana" / "2 volte a settimana" → Crea ESATTAMENTE 2 eventi/settimana
-     - "3 allenamenti a settimana" → Crea ESATTAMENTE 3 eventi/settimana
-     - "4 volte a settimana" → Crea ESATTAMENTE 4 eventi/settimana
-     
-     ⚠️ IMPORTANTE: Il numero è ESATTO, non un minimo!
-     - "1/settimana" = 1 evento, non "1-2" o "almeno 1"
-     - "2/settimana" = 2 eventi, non "2-3"
-     
-     → Rispetta ESATTAMENTE quella frequenza, non interpretarla liberamente
-     → NON riempire forzatamente tutti i giorni disponibili
-   - Determina se ci sono pattern ricorrenti (es: allenamento 3x/settimana, studio quotidiano)
+     For each occupiedSlot:
+       eventStart = Date(start).getTime()
+       eventEnd = Date(end).getTime()
+       
+       IF (taskStart < eventEnd + buffer) AND (taskEnd > eventStart - buffer):
+         CONFLICT → Must reschedule task
 
-2. FREQUENZA E DISTRIBUZIONE SETTIMANALE (REGOLA CRITICA)
-   
-   ⚠️⚠️⚠️ REGOLA AUREA - RISPETTA IL NUMERO ESATTO:
-   
-   ESEMPI CONCRETI (da rispettare LETTERALMENTE):
-   - "1 evento a settimana" → byDay: ["MO"] (1 solo giorno, es: Lunedì)
-   - "2 eventi a settimana" → byDay: ["MO", "TH"] (2 soli giorni, es: Lun, Gio)
-   - "3 volte a settimana" → byDay: ["MO", "WE", "FR"] (3 soli giorni)
-   - "4 allenamenti a settimana" → byDay: ["MO", "WE", "FR", "SA"] (4 soli giorni)
-   - "7 volte a settimana" o "quotidiano" → byDay: ["MO","TU","WE","TH","FR","SA","SU"] (tutti i giorni)
-   
-   ⚠️ SE L'UTENTE DICE "1/settimana":
-   - Crea UN SOLO evento ricorrente settimanale
-   - byDay deve avere UN SOLO giorno
-   - Esempio: byDay: ["WE"] (solo Mercoledì)
-   - NON creare: byDay: ["MO", "WE"] → Questo è SBAGLIATO per "1/settimana"!
-   
-   ⚠️ SE L'UTENTE DICE "2/settimana":
-   - Crea UN evento ricorrente con byDay che ha DUE giorni
-   - Esempio: byDay: ["TU", "FR"] (Martedì e Venerdì)
-   - NON creare 3 o più giorni!
-   
-   PRINCIPIO BASE:
-   - NON riempire ogni singolo giorno solo perché è disponibile
-   - La tendenza DEVE essere quella di rispettare le indicazioni dell'utente, NON massimizzare l'uso del tempo
-   - Se l'utente vuole più eventi, li richiederà esplicitamente
-   
-   ⚠️⚠️⚠️ REGOLA CRITICA - UN OBIETTIVO PER GIORNO:
-   - Se stai schedulando eventi per questo obiettivo, NON metterli nello stesso giorno più volte
-   - Ogni evento ricorrente dovrebbe occupare giorni DIVERSI
-   - Esempio: Se crei "Allenamento" 2x/settimana → byDay: ["MO", "TH"] (Lunedì E Giovedì, NON due eventi Lunedì)
-   - ⚠️ ECCEZIONE: Se il calendario è così pieno che non c'è altra scelta
-   
-   AGGIUNGI EVENTI EXTRA NELLO STESSO GIORNO SOLO SE:
-   - L'utente lo richiede esplicitamente
-   - Il calendario è così pieno che non c'è altra scelta
-   - Sono attività complementari e brevi (max 60 min)
-   
-   DEFAULT: 1 evento principale per giorno, distribuito secondo la frequenza ESATTA richiesta
-
-4. RAGGRUPPA INTELLIGENTEMENTE - REGOLA FONDAMENTALE
-   
-   ⚠️⚠️⚠️ QUANDO USARE EVENTI RICORRENTI VS EVENTI SINGOLI:
-   
-   🔄 CASO A - USA EVENTO RICORRENTE (con recurrence):
-   Quando la STESSA attività si ripete più volte:
-   
-   Esempi:
-   - "Allenamento gambe 2 volte a settimana" → 1 SOLO subtask ricorrente
-   - "Lezione di inglese ogni martedì" → 1 SOLO subtask ricorrente  
-   - "Daily standup meeting" → 1 SOLO subtask ricorrente
-   - "Corso di yoga 3 volte a settimana" → 1 SOLO subtask ricorrente
-   
-   ✅ CORRETTO (Allenamento - stessa attività ripetuta):
-   {
-     "subtasks": [
-       {
-         "title": "Allenamento Upper Body",
-         "description": "Panca, shoulder press, tricipiti",
-         "suggestedStart": "2025-11-05T09:00:00.000Z",
-         "suggestedEnd": "2025-11-05T10:30:00.000Z",
-         "recurrence": {
-           "frequency": "WEEKLY",
-           "byDay": ["TU", "FR"],  // ← 2 volte a settimana
-           "until": "2025-12-31T23:59:59.000Z"
-         }
-       }
-     ]
-   }
-   
-   📅 CASO B - USA EVENTI SEPARATI (NO recurrence):
-   Quando sono attività DIVERSE in sequenza, anche se distanziate 1 settimana l'una dall'altra:
-   
-   Esempi:
-   - "Progetto con 5 fasi diverse, 1 fase a settimana" → 5 subtask SEPARATI
-   - "Corso con 4 moduli, 1 modulo a settimana" → 4 subtask SEPARATI
-   - "Piano di studio con capitoli diversi" → N subtask SEPARATI
-   - "Sviluppo software: Design, Implementazione, Testing, Deploy" → 4 subtask SEPARATI
-   
-   ✅ CORRETTO (Progetto con fasi diverse):
-   {
-     "subtasks": [
-       {
-         "title": "Fase 1: Analisi Requisiti",
-         "description": "Studio del problema e raccolta dati",
-         "suggestedStart": "2025-11-05T15:00:00.000Z",
-         "suggestedEnd": "2025-11-05T16:00:00.000Z"
-         // ← NO recurrence perché è una fase UNICA
-       },
-       {
-         "title": "Fase 2: Implementazione MLP",
-         "description": "Coding e training del modello",
-         "suggestedStart": "2025-11-12T15:00:00.000Z",
-         "suggestedEnd": "2025-11-12T16:00:00.000Z"
-         // ← NO recurrence perché è una fase DIVERSA
-       },
-       {
-         "title": "Fase 3: Testing e Validazione",
-         "description": "Valutazione performance",
-         "suggestedStart": "2025-11-19T15:00:00.000Z",
-         "suggestedEnd": "2025-11-19T16:00:00.000Z"
-         // ← NO recurrence
-       }
-     ]
-   }
-   
-   ⚠️ INDICATORI CHIAVE PER EVENTI SEPARATI:
-   - Presenza di parole come: "fasi", "step", "moduli", "capitoli", "milestone"
-   - Attività con titoli/descrizioni DIVERSE
-   - Progressione logica (Fase 1 → Fase 2 → Fase 3)
-   - Documento allegato con sezioni/capitoli distinti
-   - L'ultima attività è diversa (es: "revisione finale", "consegna", "presentazione")
-   
-   ⚠️ INDICATORI CHIAVE PER EVENTI RICORRENTI:
-   - La STESSA attività ripetuta (es: "allenamento", "lezione", "riunione")
-   - Frequenza esplicita senza fasi ("2 volte a settimana", "ogni martedì")
-   - Nessuna progressione logica tra le occorrenze
-   - Attività indipendenti l'una dall'altra
-   
-   🎯 REGOLA D'ORO:
-   - Se ogni evento ha un TITOLO DIVERSO o un OBIETTIVO DIVERSO → Eventi SEPARATI (NO recurrence)
-   - Se ogni evento fa la STESSA COSA più volte → Evento RICORRENTE (con recurrence)
-   - In caso di dubbio → Preferisci eventi SEPARATI per maggiore flessibilità
-   ✅ JSON OUTPUT:
-   {
-     "subtasks": [
-       { "title": "Fase 1: Ricerca", "suggestedStart": "2025-11-05T15:00:00.000Z", ... },
-       { "title": "Fase 2: Implementazione", "suggestedStart": "2025-11-12T15:00:00.000Z", ... },
-       { "title": "Fase 3: Testing", "suggestedStart": "2025-11-19T15:00:00.000Z", ... }
-     ]
-   }
-   → OK perché sono attività DIVERSE
-   
-   ⚠️ REGOLA D'ORO:
-   - Se ogni evento ha un TITOLO DIVERSO o un OBIETTIVO DIVERSO → Eventi SEPARATI (NO recurrence)
-   - Se ogni evento fa la STESSA COSA più volte → Evento RICORRENTE (con recurrence)
-   - In caso di dubbio → Preferisci eventi SEPARATI per maggiore flessibilità
-   - Durata ideale per evento: 60-180 minuti (sessioni produttive)
-   - Raggruppa micro-task della stessa sessione in 1 subtask con description dettagliata
-
-5. SCHEDULAZIONE SENZA SOVRAPPOSIZIONI (ALGORITMO RIGIDO)
-   
-   Per OGNI subtask che crei:
-   
-   STEP A - Calcola timestamp evento:
-   - taskStart = timestamp ISO inizio task
-   - taskEnd = timestamp ISO fine task (taskStart + durata in millisecondi)
-   
-   STEP B - Controlla TUTTI gli eventi esistenti:
-   Per ogni evento nel calendario:
-     - eventStart = timestamp ISO inizio evento
-     - eventEnd = timestamp ISO fine evento
-     - Buffer = 15 minuti (900000 millisecondi)
-     - Zona proibita = [eventStart - Buffer, eventEnd + Buffer]
-     
-   STEP C - Verifica sovrapposizione:
-   Formula: (taskStart < eventEnd + Buffer) AND (taskEnd > eventStart - Buffer)
-   - Se TRUE → SOVRAPPOSIZIONE → Sposta task in altro orario
-   - Se FALSE → OK, procedi
-   
-   STEP D - Trova slot libero:
-   - Orario lavorativo: 09:00-18:00 (giorni feriali)
-   - Weekend: solo se strettamente necessario
-   - Preferenza: mattina (09:00-12:00) per task intensi
-   - Mantieni pattern ricorrenti (stesso giorno/ora se possibile)
-   - ⚠️ RISPETTA LA FREQUENZA: Se l'utente vuole 4/settimana, distribuisci su 4 giorni diversi (NON 7!)
-   - ⚠️ NON sovrapporre più eventi nello stesso giorno se non necessario
-
-6. FORMATO SUBTASK (JSON)
-   
-   Ogni subtask DEVE avere:
-   - title: stringa breve (max 60 caratteri)
-   - description: stringa dettagliata (cosa include questo blocco)
-   - estimatedDuration: numero in minuti (60-180)
-   - priority: "high" | "medium" | "low"
-   - suggestedStart: timestamp ISO 8601 (es: "2025-11-03T09:00:00.000Z") - OBBLIGATORIO
-   - suggestedEnd: timestamp ISO 8601 (es: "2025-11-03T10:30:00.000Z") - OBBLIGATORIO
-   - location: stringa (es: "Palestra", "Casa", "Ufficio")
-   - recurrence: oggetto (OPZIONALE, solo per eventi ripetuti)
-   
-   Struttura recurrence (solo se l'attività si ripete):
-   {
-     "frequency": "DAILY" | "WEEKLY" | "MONTHLY",
-     "interval": 1, // ogni quanti giorni/settimane/mesi
-     "byDay": ["MO", "WE"], // solo per WEEKLY - ⚠️ NUMERO GIORNI = FREQUENZA RICHIESTA!
-     "until": "2025-12-31T23:59:59.000Z" // data fine ripetizione (usa deadline)
-   }
-   
-   ⚠️⚠️⚠️ ESEMPI CORRETTI DI FREQUENZA (SEGUI QUESTI PATTERN):
-   
-   CASO 1: "1 allenamento a settimana" o "1 volta/settimana"
-   ✅ CORRETTO:
-   "recurrence": {
-     "frequency": "WEEKLY",
-     "byDay": ["WE"],  // ← UN SOLO GIORNO (es: Mercoledì)
-     "until": "2025-12-31T23:59:59.000Z"
-   }
-   ❌ SBAGLIATO: byDay: ["MO", "WE"] ← Questo è 2/settimana, NON 1!
-   
-   CASO 2: "2 allenamenti a settimana" o "2 volte/settimana"
-   ✅ CORRETTO:
-   "recurrence": {
-     "frequency": "WEEKLY",
-     "byDay": ["TU", "FR"],  // ← DUE GIORNI (es: Martedì, Venerdì)
-     "until": "2025-12-31T23:59:59.000Z"
-   }
-   ❌ SBAGLIATO: byDay: ["MO", "WE", "FR"] ← Questo è 3/settimana, NON 2!
-   
-   CASO 3: "4 allenamenti a settimana" o "4 volte/settimana"
-   ✅ CORRETTO:
-   "recurrence": {
-     "frequency": "WEEKLY",
-     "byDay": ["MO", "WE", "FR", "SA"],  // ← QUATTRO GIORNI
-     "until": "2025-12-31T23:59:59.000Z"
-   }
-   
-   CASO 4: "Ogni giorno" o "quotidiano" o "7 volte/settimana"
-   ✅ CORRETTO:
-   "recurrence": {
-     "frequency": "DAILY",  // ← Usa DAILY per eventi giornalieri
-     "until": "2025-12-31T23:59:59.000Z"
-   }
-   
-   REGOLA CHIAVE: lunghezza array byDay = numero esatto richiesto dall'utente!
-
-6. VINCOLI ASSOLUTI
-   ⛔ VIETATO sovrapporre task con eventi esistenti
-   ⛔ VIETATO usare orari fuori 09:00-18:00 (senza motivo)
-   ⛔ VIETATO superare ${Math.round(availableHours * 60)} minuti totali
-   ⛔ VIETATO ignorare la frequenza numerica esatta dell'utente
-      Esempi VIETATI:
-      - Utente dice "1/settimana" → TU crei 2 o 3 giorni ❌
-      - Utente dice "2/settimana" → TU crei 4 giorni ❌
-      - Utente dice "3/settimana" → TU crei 5 o 7 giorni ❌
-   ⛔ OBBLIGATORIO fornire suggestedStart e suggestedEnd per OGNI task
-   ⛔ OBBLIGATORIO verificare sovrapposizioni prima di generare il JSON
-
-7. CONFLITTI E RACCOMANDAZIONI
-   - conflicts: array di stringhe (segnala problemi: deadline troppo vicina, calendario pieno, ecc.)
-   - recommendations: array di stringhe (suggerimenti strategici per l'utente)
-
-═══════════════════════════════════════════════════════════════════
-📤 FORMATO OUTPUT (JSON PURO)
-═══════════════════════════════════════════════════════════════════
-
-Rispondi SOLO con JSON valido. NON aggiungere testo, markdown o spiegazioni.
-
-ESEMPIO 1 - "1 allenamento a settimana":
+OUTPUT_SCHEMA (JSON only, no markdown):
 {
   "subtasks": [
     {
-      "title": "Allenamento Full Body",
-      "description": "Squat 4x8, Panca 4x8, Stacco 3x6, Trazioni 3x10",
-      "estimatedDuration": 90,
-      "priority": "high",
-      "suggestedStart": "2025-11-04T09:00:00.000Z",
-      "suggestedEnd": "2025-11-04T10:30:00.000Z",
-      "location": "Palestra",
-      "recurrence": {
-        "frequency": "WEEKLY",
-        "byDay": ["WE"],
-        "until": "${deadline.toISOString()}"
+      "title": "string (max 60 chars, Italian)",
+      "description": "string (detailed, Italian)",
+      "estimatedDuration": number, // minutes (60-180 typical)
+      "priority": "high"|"medium"|"low",
+      "suggestedStart": "ISO8601 timestamp (REQUIRED)",
+      "suggestedEnd": "ISO8601 timestamp (REQUIRED)",
+      "location": "string (optional)",
+      "recurrence": { // OPTIONAL - only for repeated SAME activity
+        "frequency": "DAILY"|"WEEKLY"|"MONTHLY",
+        "interval": number, // default: 1
+        "byDay": ["MO","TU","WE","TH","FR","SA","SU"], // for WEEKLY
+        "until": "ISO8601 timestamp" // use goal.deadline
       }
     }
   ],
-  "conflicts": [],
-  "recommendations": [
-    "Allenamento programmato 1 volta a settimana (Mercoledì) come richiesto",
-    "Un solo giorno di allenamento permette recupero ottimale"
-  ]
+  "conflicts": ["string"], // warnings about tight deadlines, full calendar, etc.
+  "recommendations": ["string"] // strategic suggestions for user
 }
 
-ESEMPIO 2 - "4 allenamenti a settimana":
-{
-  "subtasks": [
-    {
-      "title": "Allenamento Upper Body",
-      "description": "Panca piana 4x8, Shoulder press 3x10, Tricipiti 3x12, Alzate laterali 3x15",
-      "estimatedDuration": 90,
-      "priority": "high",
-      "suggestedStart": "2025-11-04T09:00:00.000Z",
-      "suggestedEnd": "2025-11-04T10:30:00.000Z",
-      "location": "Palestra",
-      "recurrence": {
-        "frequency": "WEEKLY",
-        "byDay": ["MO", "WE", "FR", "SA"],
-        "until": "${deadline.toISOString()}"
-      }
-    }
-  ],
-  "conflicts": [],
-  "recommendations": [
-    "Allenamento programmato 4 volte a settimana come richiesto (Lun/Mer/Ven/Sab)",
-    "Giorni di riposo: Mar, Gio, Dom per recupero muscolare ottimale"
-  ]
+VALIDATION_CHECKLIST (before outputting):
+✓ All suggestedStart/End are ISO8601 timestamps
+✓ No overlaps with occupiedSlots (checked with algorithm above)
+✓ If user said "N/week", byDay.length === N
+✓ Recurrence only for SAME repeated activity
+✓ Multiple tasks per day ONLY if natural/requested (see rule 4)
+✓ All text in ITALIAN
+✓ Valid time range (06:00-23:00)
+✓ Realistic durations (15min - 12h)
+
+START_ANALYSIS: Generate the task plan now.`;
 }
-
-⚠️⚠️⚠️ REGOLE FINALI - CONTROLLA PRIMA DI INVIARE:
-1. Conta i giorni in byDay → DEVONO essere ESATTAMENTE quelli richiesti dall'utente
-2. "1/settimana" → byDay con 1 elemento (es: ["WE"])
-3. "2/settimana" → byDay con 2 elementi (es: ["MO", "TH"])
-4. "3/settimana" → byDay con 3 elementi (es: ["MO", "WE", "FR"])
-5. "4/settimana" → byDay con 4 elementi (es: ["MO", "WE", "FR", "SA"])
-6. NON aggiungere giorni extra "per sicurezza" o "per ottimizzare"
-
-NOTE FINALI:
-- Se l'utente dice "1/settimana" → byDay ha ESATTAMENTE 1 giorno
-- Se l'utente dice "2/settimana" → byDay ha ESATTAMENTE 2 giorni
-- NON aggiungere giorni extra solo perché il calendario è libero
-- La frequenza è un vincolo RIGIDO, non un suggerimento
-
-═══════════════════════════════════════════════════════════════════
-⚠️ VERIFICA FINALE PRE-INVIO
-═══════════════════════════════════════════════════════════════════
-
-Prima di inviare il JSON, PER OGNI subtask:
-
-1. Converti suggestedStart in timestamp numerico
-2. Converti suggestedEnd in timestamp numerico
-3. Per ogni evento esistente:
-   - Converti start/end in timestamp
-   - Applica formula: (taskStart < eventEnd + 900000) AND (taskEnd > eventStart - 900000)
-   - Se TRUE → HAI SBAGLIATO → Cambia orario task
-4. Solo se TUTTI i task non si sovrappongono → Invia JSON
-5. Se un solo task si sovrappone → Risposta INVALIDA
-
-La tua risposta sarà automaticamente scartata se ci sono sovrapposizioni.
-`;
-  }
 
   private async callAI(prompt: string): Promise<string> {
     const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
