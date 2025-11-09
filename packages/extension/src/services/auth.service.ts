@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../config/constants';
+import { API_BASE_URL, GOOGLE_CLIENT_ID, EXTENSION_ID } from '../config/constants';
 
 interface AuthState {
   token: string | null;
@@ -10,9 +10,6 @@ interface AuthState {
     picture?: string;
   } | null;
 }
-
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const EXTENSION_ID = chrome.runtime.id;
 
 class AuthService {
   private buildGoogleAuthUrl(): string {

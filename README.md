@@ -319,6 +319,42 @@ VITE_API_URL="http://localhost:3000"
 - **Google Cloud Platform** account (for Calendar API)
 - **OpenRouter API** key
 
+#### Environment Setup
+
+**🔐 Secure Secrets Management**
+
+This project uses encrypted `.env` files to securely share secrets between team members without exposing them in the repository.
+
+**For Maintainers (First-Time Setup):**
+```bash
+# 1. Copy template and configure secrets
+cp .env.template .env
+# Edit .env with your real secret values
+
+# 2. Encrypt for sharing
+./scripts/manage-secrets.sh encrypt
+# Enter a secure passphrase when prompted
+
+# 3. Commit the encrypted file
+git add .env.encrypted
+git commit -m "feat: add encrypted environment secrets"
+```
+
+**For Team Members:**
+```bash
+# 1. Decrypt shared secrets
+./scripts/manage-secrets.sh decrypt
+# Use the passphrase shared by maintainer
+
+# 2. Your .env file is ready!
+```
+
+**🔒 Security Notes:**
+- `.env` contains real secrets (never commit)
+- `.env.encrypted` is safe to commit (contains encrypted data)
+- Share passphrase securely (1Password, encrypted email, etc.)
+- Rotate passphrase regularly
+
 ### Installation
 
 1. **Clone the repository**
@@ -456,10 +492,61 @@ cd packages/extension
 pnpm dev
 ```
 
-7. **Load extension in browser**
+7. **Configure Extension Environment**
 
-- Chrome: Navigate to `chrome://extensions/`, enable "Developer mode", click "Load unpacked", select `packages/extension/dist`
-- Firefox: Navigate to `about:debugging#/runtime/this-firefox`, click "Load Temporary Add-on", select `packages/extension/dist/manifest.json`
+```bash
+cd packages/extension
+cp .env.example .env
+# Edit .env with your Google OAuth credentials
+```
+
+**⚠️ Important**: The extension requires these environment variables:
+- `VITE_GOOGLE_CLIENT_ID` - Your Google OAuth Client ID
+- `VITE_EXTENSION_ID` - Your Chrome extension ID
+- `VITE_API_URL` - Backend API URL (default: http://localhost:3000)
+
+8. **Build the Extension**
+
+```bash
+cd packages/extension
+pnpm build
+```
+
+**⚠️ Note**: You must rebuild the extension after changing `.env` values:
+```bash
+pnpm build
+```
+
+9. **Load Extension in Browser**
+
+**Chrome/Edge:**
+1. Open `chrome://extensions/`
+2. Enable "Developer mode" (top-right toggle)
+3. Click "Load unpacked"
+4. Select `packages/extension/dist` folder
+5. **Copy the Extension ID** shown below your extension
+
+**Firefox:**
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click "Load Temporary Add-on"
+3. Select `packages/extension/dist/manifest.json`
+
+10. **Update Extension ID**
+
+After loading the extension, update your `.env` file:
+
+```bash
+cd packages/extension
+# Edit .env and set VITE_EXTENSION_ID to the ID from step 9
+nano .env
+```
+
+Then rebuild:
+```bash
+pnpm build
+```
+
+And reload the extension in Chrome.
 
 ---
 
